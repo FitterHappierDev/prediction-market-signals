@@ -81,6 +81,17 @@ EXPIRING_HINTS = re.compile(r"\$|above|below|hit|reach", re.IGNORECASE)
 TRADE_DEDUP_SIZE = 50_000
 
 
+def canonical_side(raw_side: str, raw_outcome: str) -> str:
+    """Map Polymarket Data API's (side=BUY|SELL, outcome=Yes|No) tuple to the
+    canonical `pm_trades.side` symbol used by the schema:
+    buy_yes | buy_no | sell_yes | sell_no. Returns '' for unknown inputs."""
+    s = (raw_side or "").lower()
+    o = (raw_outcome or "").lower()
+    if s in ("buy", "sell") and o in ("yes", "no"):
+        return f"{s}_{o}"
+    return ""
+
+
 # ---- Helpers ----------------------------------------------------------------
 
 
@@ -427,14 +438,16 @@ class PolymarketCollector:
         if size_usd <= 0:
             return  # dust / probe trade
 
-        wallet = str(raw.get("taker") or raw.get("maker") or "").lower()
+        wallet = str(
+            raw.get("proxyWallet") or raw.get("taker") or raw.get("maker") or ""
+        ).lower()
         if wallet and wallet in CONTRACT_EXCLUSIONS:
             return
 
         ts_raw = raw.get("timestamp") or raw.get("ts")
         ts = self._parse_trade_timestamp(ts_raw) or now_utc()
 
-        side = str(raw.get("side") or raw.get("outcome") or "").lower()
+        side = canonical_side(str(raw.get("side") or ""), str(raw.get("outcome") or ""))
 
         self._db.write_row(
             "pm_trades",
