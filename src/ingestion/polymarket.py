@@ -385,7 +385,7 @@ class PolymarketCollector:
         # Fallback to last trade price (REQ-PMC-002 edge case).
         if prob is None:
             try:
-                trades = await self._api.get_trades(m.yes_token_id, limit=1)
+                trades = await self._api.get_trades(m.market_id, limit=1)
                 if trades:
                     last = trades[0]
                     prob = float(last.get("price", 0))
@@ -406,10 +406,8 @@ class PolymarketCollector:
         bar.update_book(prob, bid, ask)
 
     async def _poll_trades(self, m: ParsedMarket) -> None:
-        if m.yes_token_id is None:
-            return
         try:
-            trades = await self._api.get_trades(m.yes_token_id, limit=100)
+            trades = await self._api.get_trades(m.market_id, limit=100)
         except PolymarketAPIError:
             return
 

@@ -31,6 +31,8 @@ logger = logging.getLogger(__name__)
 
 GAMMA_BASE = "https://gamma-api.polymarket.com"
 CLOB_BASE = "https://clob.polymarket.com"
+# CLOB /trades requires HMAC L2 auth; the public trade tape lives here:
+DATA_BASE = "https://data-api.polymarket.com"
 
 DEFAULT_TIMEOUT_SECONDS = 10.0
 DEFAULT_MAX_RETRIES = 10
@@ -173,13 +175,20 @@ class PolymarketAPI:
             "GET", f"{CLOB_BASE}/book", params={"token_id": token_id}
         )
 
+    # ----- Data API ----------------------------------------------------------
+
     async def get_trades(
-        self, token_id: str, limit: int = 100
+        self, market_id: str, limit: int = 100
     ) -> list[dict[str, Any]]:
+        """Public trade tape for a market. Uses the Data API (the CLOB
+        equivalent requires HMAC auth).
+
+        `market_id` is the `conditionId` (bytes32 hex) — NOT the token_id.
+        """
         result = await self._request(
             "GET",
-            f"{CLOB_BASE}/trades",
-            params={"market": token_id, "limit": limit},
+            f"{DATA_BASE}/trades",
+            params={"market": market_id, "limit": limit},
         )
         if isinstance(result, list):
             return result

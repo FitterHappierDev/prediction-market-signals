@@ -101,10 +101,10 @@ async def main() -> int:
 
     print()
     print("=" * 60)
-    print(f"[4] CLOB /trades for token {parsed.yes_token_id[:20]}...")
+    print(f"[4] Data API /trades for market {parsed.market_id[:24]}...")
     print("=" * 60)
     try:
-        trades = await api.get_trades(parsed.yes_token_id, limit=3)
+        trades = await api.get_trades(parsed.market_id, limit=3)
         print(f"Got {len(trades)} trades")
         for i, t in enumerate(trades):
             print(f"  --- trade {i} ---")
@@ -120,11 +120,11 @@ async def main() -> int:
     await api.close()
     print()
     print("Done. Confirm the field names above match what the collector expects:")
-    print("  market_id      <- conditionId | condition_id | id")
+    print("  market_id      <- conditionId")
     print("  yes_token_id   <- clobTokenIds[0]")
     print("  trade.id       <- id | trade_id | transactionHash")
     print("  trade.size     <- size  (USD via size * price)")
-    print("  trade.taker    <- taker | maker")
+    print("  trade.taker    <- taker | maker | proxyWallet")
     print("  trade.timestamp<- timestamp | ts")
     return 0
 
