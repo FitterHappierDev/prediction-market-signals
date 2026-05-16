@@ -304,6 +304,94 @@ class PolymarketCollector:
         ]
         await asyncio.gather(*self._tasks, return_exceptions=True)
 
+    # ----- historical backfill (REQ-PMC-004) ---------------------------------
+
+    async def backfill_history(self) -> None:
+        """Pull `backfill_days` of 1-minute prices for every active market.
+
+        Idempotent at the QuestDB layer (commitLag dedupes on timestamp +
+        market_id). Skipped if pm_probabilities is already non-empty.
+        Runs at half the steady-state request rate to avoid throttling.
+        """
+        if not self._needs_backfill():
+            logger.info("Polymarket backfill: pm_probabilities non-empty, skipping")
+            return
+
+        if not self._active:
+            logger.info("Polymarket backfill: discovering markets first")
+            await self._discover_once()
+
+        steady_rate = self._cfg.ingestion.polymarket.max_requests_per_second
+        self._api.set_rate(max(steady_rate / 2, 1.0))
+        try:
+            days = self._cfg.ingestion.polymarket.backfill_days
+            end_ts = int(now_utc().timestamp())
+            start_ts = end_ts - days * 86400
+            markets = list(self._active.values())
+            total = len(markets)
+            logger.info(
+                "Polymarket backfill: %d markets, %d days at half rate", total, days
+            )
+            for i, m in enumerate(markets, start=1):
+                if m.yes_token_id is None:
+                    continue
+                try:
+                    await self._backfill_one(m, start_ts, end_ts)
+                except Exception:
+                    logger.exception("Backfill failed for %s", m.market_id)
+                if i % 50 == 0 or i == total:
+                    logger.info(
+                        "Polymarket backfill: %d/%d (%.1f%%)",
+                        i,
+                        total,
+                        100.0 * i / total,
+                    )
+        finally:
+            self._api.set_rate(steady_rate)
+        logger.info("Polymarket backfill: complete")
+
+    async def _backfill_one(
+        self, m: ParsedMarket, start_ts: int, end_ts: int
+    ) -> None:
+        assert m.yes_token_id is not None
+        history = await self._api.get_prices_history(
+            m.yes_token_id, start_ts, end_ts, fidelity_minutes=1
+        )
+        for point in history:
+            t = point.get("t")
+            p = point.get("p")
+            if t is None or p is None:
+                continue
+            try:
+                ts = datetime.fromtimestamp(int(t), tz=timezone.utc)
+                prob = max(0.0, min(1.0, float(p)))
+            except (ValueError, OSError):
+                continue
+            self._db.write_row(
+                "pm_probabilities",
+                symbols={"market_id": m.market_id, "source": self.SOURCE},
+                columns={
+                    "probability": prob,
+                    "bid": 0.0,
+                    "ask": 0.0,
+                    "volume_usd": 0.0,
+                    "trade_count": 0,
+                },
+                at=TimestampNanos(int(ts.timestamp() * 1e9)),
+            )
+
+    def _needs_backfill(self) -> bool:
+        try:
+            df = self._db.query(
+                "SELECT count() AS n FROM pm_probabilities WHERE source = 'polymarket'"
+            )
+        except Exception as e:
+            logger.warning("Backfill needed-check failed (%s); will run backfill", e)
+            return True
+        if df.empty:
+            return True
+        return int(df.iloc[0]["n"]) == 0
+
     async def stop(self) -> None:
         self._stop.set()
         for t in self._tasks:

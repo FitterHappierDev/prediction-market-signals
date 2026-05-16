@@ -148,24 +148,28 @@ class PolymarketAPI:
 
     async def get_prices_history(
         self,
-        market_id: str,
+        token_id: str,
         start_ts: int,
         end_ts: int,
-        interval: str = "1m",
+        fidelity_minutes: int = 1,
     ) -> list[dict[str, Any]]:
-        """Historical probability bars. `start_ts`/`end_ts` are UNIX seconds.
-
-        Response shape varies by Polymarket release; we accept either a bare
-        list or a `{"history": [...]}` envelope.
+        """Historical probability bars for a YES token. The CLOB endpoint
+        takes the token_id (NOT the condition_id), with `fidelity` in
+        minutes. Returns a list of {t: unix_seconds, p: price}.
         """
-        params = {"startTs": start_ts, "endTs": end_ts, "interval": interval}
+        params = {
+            "market": token_id,
+            "startTs": start_ts,
+            "endTs": end_ts,
+            "fidelity": fidelity_minutes,
+        }
         result = await self._request(
-            "GET", f"{GAMMA_BASE}/markets/{market_id}/prices-history", params=params
+            "GET", f"{CLOB_BASE}/prices-history", params=params
         )
-        if isinstance(result, list):
-            return result
         if isinstance(result, dict):
             return result.get("history", []) or []
+        if isinstance(result, list):
+            return result
         return []
 
     # ----- CLOB API ----------------------------------------------------------
