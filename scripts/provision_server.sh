@@ -36,7 +36,7 @@ apt-get install -y --no-install-recommends \
     htop \
     tmux \
     jq \
-    awscli \
+    unzip \
     build-essential \
     docker.io \
     docker-compose-v2 \
@@ -44,6 +44,18 @@ apt-get install -y --no-install-recommends \
     python3.12-venv \
     python3.12-dev \
     python3-pip
+
+# --- 1b. AWS CLI v2 (not in Ubuntu 24.04 apt repos) -------------------------
+if ! command -v aws >/dev/null 2>&1; then
+    step "Installing AWS CLI v2"
+    AWSCLI_TMP="$(mktemp -d)"
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "${AWSCLI_TMP}/awscli.zip"
+    unzip -q "${AWSCLI_TMP}/awscli.zip" -d "${AWSCLI_TMP}"
+    "${AWSCLI_TMP}/aws/install" --update
+    rm -rf "${AWSCLI_TMP}"
+else
+    step "AWS CLI already installed: $(aws --version 2>&1)"
+fi
 
 # --- 2. Docker group for ubuntu ----------------------------------------------
 step "Adding ${REPO_USER} to docker group"
