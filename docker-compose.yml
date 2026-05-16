@@ -11,24 +11,27 @@ services:
       - QDB_LINE_TCP_COMMIT_INTERVAL_DEFAULT=1000
       - QDB_LINE_TCP_MAINTENANCE_JOB_INTERVAL=60000
       - QDB_SHARED_WORKER_COUNT=2
+      # Don't have QuestDB self-throttle below the Docker limit;
+      # let Docker do the enforcement.
+      - QDB_CAIRO_RAM_USAGE_LIMIT_PERCENT=95
     restart: always
     deploy:
       resources:
         limits:
-          memory: 2G
+          memory: 3G
 
   redis:
     image: redis:7-alpine
     ports:
       - "127.0.0.1:6379:6379"
-    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru
+    command: redis-server --appendonly yes --maxmemory 400mb --maxmemory-policy allkeys-lru
     volumes:
       - /data/redis:/data
     restart: always
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 512M
 
   grafana:
     image: grafana/grafana:11.0.0
