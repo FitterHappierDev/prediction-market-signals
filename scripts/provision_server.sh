@@ -84,6 +84,14 @@ mkdir -p \
 step "Setting ${DATA_DIR} ownership to ${REPO_USER}:${REPO_USER}"
 chown -R "${REPO_USER}:${REPO_USER}" "${DATA_DIR}"
 
+# Service-specific UIDs inside their containers:
+#   grafana:11.0.0   runs as UID/GID 472
+#   questdb:8.0.0    runs as UID/GID 10001 (creates its own files at startup)
+#   redis:7-alpine   runs as UID/GID 999   (creates its own files at startup)
+#   mlflow           runs as root          (no chown needed)
+# Grafana is the strict one — it needs the host bind mount writable on first boot.
+chown -R 472:472 "${DATA_DIR}/grafana"
+
 # --- 6. Clone repo (skip if exists) ------------------------------------------
 if [[ -d "${REPO_DIR}/.git" ]]; then
     step "Repo already present at ${REPO_DIR}, skipping clone"
