@@ -156,12 +156,19 @@ class KalshiCollector:
         self._stop = asyncio.Event()
 
     async def start(self) -> None:
+        logger.info("KalshiCollector starting (poll_interval=%ds)", self._poll_interval)
         self._tasks = [
             asyncio.create_task(self._discovery_loop(), name="kalshi-discovery"),
             asyncio.create_task(self._poll_loop(), name="kalshi-poll"),
             asyncio.create_task(self._flush_bars_loop(), name="kalshi-flush"),
         ]
-        await asyncio.gather(*self._tasks, return_exceptions=True)
+        results = await asyncio.gather(*self._tasks, return_exceptions=True)
+        for name, result in zip(("discovery", "poll", "flush"), results):
+            if isinstance(result, BaseException) and not isinstance(
+                result, asyncio.CancelledError
+            ):
+                logger.warning("KalshiCollector %s task ended with: %r", name, result)
+        logger.info("KalshiCollector.start() returning")
 
     async def stop(self) -> None:
         self._stop.set()
@@ -186,6 +193,7 @@ class KalshiCollector:
                 continue
 
     async def _discover_once(self) -> None:
+        logger.info("Kalshi discovery cycle starting")
         count = 0
         async for raw in self._api.iter_markets(status="open"):
             parsed = parse_market(raw)
@@ -194,6 +202,8 @@ class KalshiCollector:
             self._write_market(parsed)
             self._active[parsed.market_id] = parsed
             count += 1
+            if count % 500 == 0:
+                logger.info("Kalshi discovery: %d markets parsed so far", count)
         logger.info("Kalshi discovery: %d active markets tracked", count)
 
     def _write_market(self, m: KalshiMarket) -> None:
