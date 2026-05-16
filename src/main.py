@@ -125,7 +125,15 @@ async def main_async() -> int:
         except NotImplementedError:
             pass
 
-    # Polymarket historical backfill before live polling.
+    # Kalshi has no backfill phase, so start it immediately. Polymarket
+    # backfill (REQ-PMC-004) runs blocking before its live polling starts,
+    # but should NOT block the Kalshi pipeline.
+    tasks = [
+        asyncio.create_task(
+            run_with_restart("kalshi", kalshi.start, stop_event), name="kalshi"
+        ),
+    ]
+
     try:
         await pm.backfill_history()
     except Exception:
@@ -133,14 +141,11 @@ async def main_async() -> int:
             "Polymarket backfill failed; continuing into live polling anyway"
         )
 
-    tasks = [
+    tasks.append(
         asyncio.create_task(
             run_with_restart("polymarket", pm.start, stop_event), name="pm"
-        ),
-        asyncio.create_task(
-            run_with_restart("kalshi", kalshi.start, stop_event), name="kalshi"
-        ),
-    ]
+        )
+    )
 
     await stop_event.wait()
     logger.info("Stopping collectors...")
