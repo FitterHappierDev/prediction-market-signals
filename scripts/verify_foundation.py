@@ -19,12 +19,16 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from pathlib import Path
 
-from src.config import get_config
-from src.utils.db import QuestDBClient
-from src.utils.notifications import send_alert
-from src.utils.redis_client import RedisClient
-from src.utils.time_utils import (
+# Make `src` importable regardless of cwd or how the script was invoked.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from src.config import get_config  # noqa: E402
+from src.utils.db import QuestDBClient  # noqa: E402
+from src.utils.notifications import send_alert  # noqa: E402
+from src.utils.redis_client import RedisClient  # noqa: E402
+from src.utils.time_utils import (  # noqa: E402
     is_market_open,
     minutes_between,
     now_utc,
