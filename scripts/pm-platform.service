@@ -1,0 +1,19 @@
+[Unit]
+Description=Prediction Market Signal Platform
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/prediction-market-signals
+Environment=PYTHONPATH=/home/ubuntu/prediction-market-signals
+EnvironmentFile=/home/ubuntu/prediction-market-signals/.env
+ExecStart=/home/ubuntu/prediction-market-signals/.venv/bin/python -m src.main
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

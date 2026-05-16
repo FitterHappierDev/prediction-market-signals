@@ -1,0 +1,132 @@
+# Prediction Market Signal Platform — central configuration.
+# Source of truth for all thresholds, windows, and feature flags.
+# Secrets (API keys, webhooks) live in environment variables, NOT here.
+# Runtime overrides may be written to Redis hash `system:config` (take precedence).
+
+# ===== INGESTION =====
+ingestion:
+  polymarket:
+    poll_interval_seconds: 15
+    backfill_days: 7
+    max_requests_per_second: 4
+  kalshi:
+    poll_interval_seconds: 15
+    api_key_env: "KALSHI_API_KEY"
+    max_requests_per_second: 10
+  wallet_tracer:
+    max_concurrent_rpc: 5
+    retrace_interval_hours: 24
+    hop_depth: 2
+
+# ===== DETECTION =====
+detection:
+  anomaly:
+    wallet_age_threshold_days: 7
+    wallet_market_count_threshold: 5
+    win_rate_pvalue_threshold: 0.001
+    bet_size_zscore_threshold: 3.0
+    pre_resolution_window_minutes: 10
+    alert_threshold_watch: 4.5
+    alert_threshold_critical: 7.0
+  signal:
+    min_prob_shift: 0.05
+    volume_confirmation_ratio: 1.5
+    cross_platform_required: false
+    velocity_thresholds:
+      sprint: 0.02
+      fast: 0.005
+      moderate: 0.001
+  time_adjuster:
+    preset_late_stage_threshold: 0.10
+    preset_early_stage_threshold: 0.70
+    expiring_risk_free_rate: 0.045
+    triggered_confidence_discount: 0.70
+    triggered_maturity_minutes: 43200
+
+# ===== MODELS =====
+models:
+  stage1:
+    algorithm: "lightgbm"
+    n_estimators: 200
+    max_depth: 6
+    learning_rate: 0.05
+    min_child_samples: 20
+    subsample: 0.8
+    colsample_bytree: 0.8
+    min_training_samples: 200
+    calibration_method: "sigmoid"
+  stage2:
+    algorithm: "lightgbm"
+    objective: "regression"
+    n_estimators: 200
+    max_depth: 6
+    learning_rate: 0.05
+    min_training_samples: 150
+
+# ===== RISK =====
+risk:
+  gates:
+    min_signal_quality: 0.50
+    min_linkage_score: 0.40
+    min_joint_confidence: 0.55
+    max_spread_bps: 20
+  sizing:
+    max_pm_exposure_pct: 0.05
+    category_caps:
+      fed_rate: 0.03
+      earnings: 0.01
+      geopolitical: 0.02
+      recession: 0.02
+      crypto: 0.01
+      political: 0.01
+  circuit_breakers:
+    drawdown_limit_pct: 0.02
+    drawdown_cooldown_days: 30
+    feed_stall_minutes: 5
+    psi_halt_threshold: 0.25
+    brier_reduce_threshold: 0.20
+    brier_recovery_days: 30
+
+# ===== EXECUTION =====
+execution:
+  paper_mode: true
+  brokers:
+    equities: "alpaca"
+    options: "alpaca"
+    crypto: "ccxt"
+  alpaca:
+    api_key_env: "ALPACA_API_KEY"
+    api_secret_env: "ALPACA_API_SECRET"
+    base_url: "https://paper-api.alpaca.markets"
+  order_timeout_minutes: 15
+
+# ===== MONITORING =====
+monitoring:
+  health_check_interval_hours: 168  # weekly
+  crowding_check_interval_days: 30
+  notifications:
+    slack_webhook_env: "SLACK_WEBHOOK_URL"
+    telegram_bot_token_env: "TELEGRAM_BOT_TOKEN"
+    telegram_chat_id_env: "TELEGRAM_CHAT_ID"
+
+# ===== LINKAGE VALIDATION =====
+linkage:
+  min_layers_passing: 3
+  min_composite_score: 0.60
+  min_events_for_event_study: 30
+  granger_resample_minutes: 5
+  granger_max_lag_minutes: 360
+  cross_correlation_max_lag_minutes: 2880
+  min_viable_lag_minutes: 5
+
+# ===== FEATURE FLAGS =====
+# Boolean toggles. Per the design these may also be set via env var of the same
+# name (uppercased) — env wins. See tech design Section 9.2.
+feature_flags:
+  paper_mode: true
+  stage2_enabled: false
+  execution_enabled: false
+  crypto_enabled: false
+  wallet_tracing_enabled: true
+  cross_platform_required: false
+  self_training_enabled: false

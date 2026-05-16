@@ -1,5 +1,32 @@
+# Secrets and local environment
 .env
+.env.local
+*.pem
+
+# Python
 __pycache__/
-.venv/
-data/
 *.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Data and models (live on EBS, never in git)
+data/
+/data/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log
+logs/

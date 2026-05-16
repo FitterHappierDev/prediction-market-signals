@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  questdb:
+    image: questdb/questdb:8.0.0
+    ports:
+      - "127.0.0.1:9000:9000"    # Web console — localhost only
+      - "127.0.0.1:9009:9009"    # ILP ingestion
+      - "127.0.0.1:8812:8812"    # PostgreSQL wire protocol (for Grafana)
+    volumes:
+      - /data/questdb:/var/lib/questdb
+    environment:
+      - QDB_LINE_TCP_COMMIT_INTERVAL_DEFAULT=1000
+      - QDB_LINE_TCP_MAINTENANCE_JOB_INTERVAL=60000
+      - QDB_SHARED_WORKER_COUNT=2
+    restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru
+    volumes:
+      - /data/redis:/data
+    restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    ports:
+      - "0.0.0.0:3000:3000"     # Exposed for remote access (secured by AWS Security Group)
+    volumes:
+      - /data/grafana:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_SERVER_ROOT_URL=http://${SERVER_IP}:3000
+    restart: always
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.16.2
+    ports:
+      - "0.0.0.0:5000:5000"     # Exposed for remote access (secured by AWS Security Group)
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --backend-store-uri sqlite:///data/mlflow.db
+      --default-artifact-root /data/artifacts
+    volumes:
+      - /data/mlflow:/data
+    restart: always
