@@ -48,6 +48,11 @@ def _setup_logging() -> None:
         format="%(asctime)sZ %(levelname)s %(name)s %(message)s",
         datefmt="%Y-%m-%dT%H:%M:%S",
     )
+    # httpx and httpcore log every HTTP request at INFO; with backfill
+    # making thousands of calls, that drowns out our own application
+    # logs. Bump them to WARNING so we only see actual problems.
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 async def run_with_restart(
