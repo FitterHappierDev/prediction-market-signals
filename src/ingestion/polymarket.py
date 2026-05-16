@@ -442,7 +442,9 @@ class PolymarketCollector:
             "volume_total_usd": m.volume_total_usd,
         }
         if m.end_date is not None:
-            columns["resolution_time"] = TimestampNanos(int(m.end_date.timestamp() * 1e9))
+            # questdb-python wants a datetime (or TimestampMicros) for
+            # TIMESTAMP columns; TimestampNanos is only valid for `at=`.
+            columns["resolution_time"] = m.end_date
         if m.strike_price is not None:
             columns["strike_price"] = float(m.strike_price)
         self._db.write_row("pm_markets", symbols=symbols, columns=columns)

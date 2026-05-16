@@ -211,9 +211,9 @@ class KalshiCollector:
             "volume_total_usd": m.volume_total_usd,
         }
         if m.close_time is not None:
-            columns["resolution_time"] = TimestampNanos(
-                int(m.close_time.timestamp() * 1e9)
-            )
+            # datetime is a supported column type; TimestampNanos only
+            # works for the `at=` designated timestamp.
+            columns["resolution_time"] = m.close_time
         self._db.write_row("pm_markets", symbols=symbols, columns=columns)
 
     # ----- polling -----------------------------------------------------------
