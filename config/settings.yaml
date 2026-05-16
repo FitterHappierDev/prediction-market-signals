@@ -12,7 +12,9 @@ ingestion:
   kalshi:
     poll_interval_seconds: 15
     api_key_env: "KALSHI_API_KEY"
-    max_requests_per_second: 10
+    # Empirically the public API throttles below the 10 r/s the spec
+    # mentioned — drop to 4 r/s to avoid 429 + 60s pauses.
+    max_requests_per_second: 4
   wallet_tracer:
     max_concurrent_rpc: 5
     retrace_interval_hours: 24

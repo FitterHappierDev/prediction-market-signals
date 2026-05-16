@@ -176,21 +176,27 @@ class QuestDBClient:
             self._sender = None
 
     def _flush_buffer(self) -> None:
+        """Replay the in-memory buffer through a fresh sender.
+
+        Transactional: rows are removed from the buffer only after the
+        sender's flush() succeeds. If anything fails mid-replay, the
+        rows are pushed back to the head of the buffer in their original
+        order so we don't lose writes.
+        """
         if not self._buffer or self._sender is None:
             return
         logger.info("Flushing %d buffered rows", len(self._buffer))
-        while self._buffer:
-            table, symbols, columns, at = self._buffer.popleft()
-            try:
-                self._sender.row(table, symbols=symbols, columns=columns, at=at)
-            except IngressError:
-                self._buffer.appendleft((table, symbols, columns, at))
-                self._drop_sender()
-                return
+        queued = list(self._buffer)
+        self._buffer.clear()
         try:
+            for table, symbols, columns, at in queued:
+                self._sender.row(table, symbols=symbols, columns=columns, at=at)
             self._sender.flush()
-        except IngressError:
+        except IngressError as e:
+            logger.warning("Buffer re-flush failed: %s; re-queuing", e)
             self._drop_sender()
+            # extendleft + reversed preserves original FIFO order
+            self._buffer.extendleft(reversed(queued))
 
     # ----- writes -------------------------------------------------------------
     def write_row(
@@ -213,8 +219,11 @@ class QuestDBClient:
             self._buffer.append(row)
             return
         try:
+            # No explicit flush — questdb-python auto-flushes per row/byte/time
+            # thresholds (defaults: 600 rows / 64K / 1000ms). Flushing after
+            # every row was causing per-row TCP traffic that QuestDB resets
+            # under sustained load.
             sender.row(table, symbols=row[1], columns=row[2], at=row[3])
-            sender.flush()
         except IngressError as e:
             logger.warning("ILP write failed: %s; buffering and reconnecting", e)
             self._drop_sender()
@@ -254,4 +263,11 @@ class QuestDBClient:
             self.query(ddl.strip())
 
     def close(self) -> None:
+        # Best-effort final flush so the auto-flush buffer isn't lost on
+        # shutdown.
+        if self._sender is not None:
+            try:
+                self._sender.flush()
+            except IngressError:
+                pass
         self._drop_sender()
