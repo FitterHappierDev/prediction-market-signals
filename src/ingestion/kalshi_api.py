@@ -180,6 +180,59 @@ class KalshiAPI:
 
     # ----- Public endpoints --------------------------------------------------
 
+    async def iter_events(
+        self,
+        category: str | None = None,
+        status: str = "open",
+        with_nested_markets: bool = False,
+        page_size: int = 100,
+        max_pages: int = 200,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Cursor-paginated iteration over /events.
+
+        Kalshi's category metadata lives on events, not markets — so this
+        is the right place to filter by Politics/Economics/etc. Passing
+        `with_nested_markets=True` makes the response include each
+        event's markets inline, saving a per-event roundtrip.
+        """
+        cursor: str | None = None
+        pages = 0
+        total_yielded = 0
+        while pages < max_pages:
+            pages += 1
+            params: dict[str, Any] = {"status": status, "limit": page_size}
+            if category:
+                params["category"] = category
+            if with_nested_markets:
+                params["with_nested_markets"] = "true"
+            if cursor:
+                params["cursor"] = cursor
+            page = await self._request("GET", "/events", params=params)
+            events = page.get("events") or []
+            new_cursor = page.get("cursor")
+            if pages == 1 or pages % 10 == 0:
+                logger.info(
+                    "Kalshi /events page %d (cat=%s): %d events, cursor=%r",
+                    pages,
+                    category or "*",
+                    len(events),
+                    (new_cursor or "")[:24],
+                )
+            if not events:
+                break
+            for event in events:
+                yield event
+                total_yielded += 1
+            if not new_cursor or new_cursor == cursor:
+                break
+            cursor = new_cursor
+        logger.info(
+            "Kalshi /events (cat=%s): ended after %d pages, %d events yielded",
+            category or "*",
+            pages,
+            total_yielded,
+        )
+
     async def iter_markets(
         self,
         status: str = "open",

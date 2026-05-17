@@ -38,20 +38,34 @@ from src.utils.time_utils import now_utc
 logger = logging.getLogger(__name__)
 
 
-# REQ-KAL-001 — category mapping from Kalshi (category, subtitle) tuples
-# to our internal category. Order matters: first hit wins.
-def kalshi_category(raw_category: str, raw_sub: str) -> tuple[str, str]:
-    """Return (category, bet_type) for a Kalshi market."""
-    cat = (raw_category or "").lower()
-    sub = (raw_sub or "").lower()
-    if cat == "economics" and "fed funds rate" in sub:
-        return "fed_rate", "preset"
-    if cat == "economics" and ("cpi" in sub or "unemployment" in sub):
-        return "recession", "preset"
-    if cat == "financials" and "earnings" in sub:
-        return "earnings", "preset"
-    if cat == "politics":
+# Kalshi categories we ingest. Everything else (Sports, Entertainment,
+# Climate, ...) is dropped at the discovery stage so we never pay the
+# per-market poll cost. REQ-KAL-001 maps them as follows:
+TARGET_KALSHI_CATEGORIES: tuple[str, ...] = (
+    "Politics",
+    "Elections",
+    "Economics",
+    "Financials",
+)
+
+
+def derive_category_from_event(
+    event_category: str | None, series_ticker: str | None
+) -> tuple[str, str]:
+    """Map a Kalshi event's (category, series_ticker) to our (category,
+    bet_type) pair. Kalshi market responses don't carry category info —
+    it lives on the parent event."""
+    cat = (event_category or "").lower()
+    series = (series_ticker or "").upper()
+    if cat in ("politics", "elections"):
         return "political", "preset"
+    if cat == "financials":
+        return "earnings", "preset"
+    if cat == "economics":
+        # Sub-classify economics events from their series ticker prefix.
+        if any(token in series for token in ("CPI", "UNEMP", "GDP", "INFL", "JOBS")):
+            return "recession", "preset"
+        return "fed_rate", "preset"
     return "other", "preset"
 
 
@@ -76,21 +90,29 @@ def _parse_iso(raw: Any) -> datetime | None:
         return None
 
 
-def parse_market(raw: dict[str, Any]) -> KalshiMarket | None:
-    ticker = raw.get("ticker")
+def parse_market_with_event(
+    raw_market: dict[str, Any], raw_event: dict[str, Any]
+) -> KalshiMarket | None:
+    """Construct a KalshiMarket from a market dict + its parent event
+    dict. The event provides the category/series_ticker we need; the
+    market provides ticker, close_time, volume, etc."""
+    ticker = raw_market.get("ticker")
     if not ticker:
         return None
-    title = raw.get("title") or raw.get("subtitle") or ticker
-    category, bet_type = kalshi_category(
-        raw.get("category", ""), raw.get("subtitle", "")
+    category, bet_type = derive_category_from_event(
+        raw_event.get("category"), raw_event.get("series_ticker")
     )
-    # Kalshi has 12k+ open markets (sports, weather, entertainment, etc.).
-    # The platform only acts on fed_rate / earnings / recession / political
-    # signals, so skip everything else at parse time — keeps `_active` and
-    # the poll loop manageable on a small instance.
     if category == "other":
         return None
-    close_time = _parse_iso(raw.get("close_time") or raw.get("expiration_time"))
+    title = (
+        raw_market.get("title")
+        or raw_market.get("yes_sub_title")
+        or raw_event.get("title")
+        or ticker
+    )
+    close_time = _parse_iso(
+        raw_market.get("close_time") or raw_market.get("expiration_time")
+    )
     return KalshiMarket(
         market_id=f"kalshi:{ticker}",
         ticker=ticker,
@@ -98,7 +120,7 @@ def parse_market(raw: dict[str, Any]) -> KalshiMarket | None:
         category=category,
         bet_type=bet_type,
         close_time=close_time,
-        volume_total_usd=float(raw.get("volume", 0) or 0),
+        volume_total_usd=float(raw_market.get("volume", 0) or 0),
     )
 
 
@@ -200,19 +222,28 @@ class KalshiCollector:
 
     async def _discover_once(self) -> None:
         logger.info("Kalshi discovery cycle starting")
-        seen = 0
+        events_seen = 0
+        markets_seen = 0
         kept = 0
-        async for raw in self._api.iter_markets(status="open"):
-            seen += 1
-            parsed = parse_market(raw)
-            if parsed is None:
-                continue
-            self._write_market(parsed)
-            self._active[parsed.market_id] = parsed
-            kept += 1
+        for kalshi_cat in TARGET_KALSHI_CATEGORIES:
+            async for event in self._api.iter_events(
+                category=kalshi_cat, status="open", with_nested_markets=True
+            ):
+                events_seen += 1
+                for raw_market in event.get("markets") or []:
+                    markets_seen += 1
+                    parsed = parse_market_with_event(raw_market, event)
+                    if parsed is None:
+                        continue
+                    self._write_market(parsed)
+                    self._active[parsed.market_id] = parsed
+                    kept += 1
         logger.info(
-            "Kalshi discovery: %d markets seen, %d kept (categorised)",
-            seen,
+            "Kalshi discovery: %d events across %d categories, "
+            "%d markets seen, %d kept",
+            events_seen,
+            len(TARGET_KALSHI_CATEGORIES),
+            markets_seen,
             kept,
         )
 
