@@ -181,20 +181,49 @@ class KalshiAPI:
     # ----- Public endpoints --------------------------------------------------
 
     async def iter_markets(
-        self, status: str = "open", page_size: int = 200
+        self,
+        status: str = "open",
+        page_size: int = 200,
+        max_pages: int = 500,
     ) -> AsyncIterator[dict[str, Any]]:
-        """Cursor-paginated iteration over markets."""
+        """Cursor-paginated iteration over /markets.
+
+        Defensive termination: stops when the response has an empty markets
+        list, no cursor, or returns the same cursor twice in a row. Also
+        caps at `max_pages` so a misbehaving server can't trap us forever.
+        Logs page progress every 20 pages.
+        """
         cursor: str | None = None
-        while True:
+        pages = 0
+        total_yielded = 0
+        while pages < max_pages:
+            pages += 1
             params: dict[str, Any] = {"status": status, "limit": page_size}
             if cursor:
                 params["cursor"] = cursor
             page = await self._request("GET", "/markets", params=params)
-            for market in page.get("markets", []) or []:
+            markets = page.get("markets") or []
+            new_cursor = page.get("cursor")
+            if pages == 1 or pages % 20 == 0:
+                logger.info(
+                    "Kalshi /markets page %d: %d markets, cursor=%r",
+                    pages,
+                    len(markets),
+                    (new_cursor or "")[:24],
+                )
+            if not markets:
+                break
+            for market in markets:
                 yield market
-            cursor = page.get("cursor")
-            if not cursor:
-                return
+                total_yielded += 1
+            if not new_cursor or new_cursor == cursor:
+                break
+            cursor = new_cursor
+        logger.info(
+            "Kalshi /markets: ended after %d pages, %d markets yielded",
+            pages,
+            total_yielded,
+        )
 
     async def get_orderbook(self, ticker: str) -> dict[str, Any]:
         return await self._request("GET", f"/markets/{ticker}/orderbook")
