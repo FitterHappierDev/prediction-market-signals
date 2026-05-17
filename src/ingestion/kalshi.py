@@ -84,6 +84,12 @@ def parse_market(raw: dict[str, Any]) -> KalshiMarket | None:
     category, bet_type = kalshi_category(
         raw.get("category", ""), raw.get("subtitle", "")
     )
+    # Kalshi has 12k+ open markets (sports, weather, entertainment, etc.).
+    # The platform only acts on fed_rate / earnings / recession / political
+    # signals, so skip everything else at parse time — keeps `_active` and
+    # the poll loop manageable on a small instance.
+    if category == "other":
+        return None
     close_time = _parse_iso(raw.get("close_time") or raw.get("expiration_time"))
     return KalshiMarket(
         market_id=f"kalshi:{ticker}",
@@ -194,17 +200,21 @@ class KalshiCollector:
 
     async def _discover_once(self) -> None:
         logger.info("Kalshi discovery cycle starting")
-        count = 0
+        seen = 0
+        kept = 0
         async for raw in self._api.iter_markets(status="open"):
+            seen += 1
             parsed = parse_market(raw)
             if parsed is None:
                 continue
             self._write_market(parsed)
             self._active[parsed.market_id] = parsed
-            count += 1
-            if count % 500 == 0:
-                logger.info("Kalshi discovery: %d markets parsed so far", count)
-        logger.info("Kalshi discovery: %d active markets tracked", count)
+            kept += 1
+        logger.info(
+            "Kalshi discovery: %d markets seen, %d kept (categorised)",
+            seen,
+            kept,
+        )
 
     def _write_market(self, m: KalshiMarket) -> None:
         symbols = {
