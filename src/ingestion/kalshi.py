@@ -127,35 +127,46 @@ def parse_market_with_event(
 def _midpoint_from_orderbook(
     book: dict[str, Any],
 ) -> tuple[float | None, float | None, float | None]:
-    """Kalshi orderbook fields: `yes` and `no`, each a list of [price_cents, size].
+    """Parse Kalshi's fractional orderbook.
 
-    YES probability = midpoint of YES side. If only one side has liquidity,
-    use the available side. The NO side gives a sanity check
-    (yes + no ≈ 100 cents).
+    Response shape from /markets/{ticker}/orderbook:
+        {"orderbook_fp": {
+            "yes_dollars": [[price_str, size_str], ...],  # bids on YES
+            "no_dollars":  [[price_str, size_str], ...],  # bids on NO
+        }}
+
+    Prices are already in dollars (e.g. "0.0100" = 1 cent). The YES side
+    is bids on YES (max = best bid). The YES ask is implied by the best
+    NO bid: ask_yes = 1.0 - max(no_dollars).
+
+    Caller should pass the inner object (book["orderbook_fp"]); we also
+    accept the older `yes`/`no` keys for forward-compatibility.
     """
-    yes_side = book.get("yes") or []
-    no_side = book.get("no") or []
+    yes_side = book.get("yes_dollars") or book.get("yes") or []
+    no_side = book.get("no_dollars") or book.get("no") or []
 
-    def _best(side: list, want: str) -> float | None:
-        prices = [float(level[0]) for level in side if level]
-        if not prices:
-            return None
-        return max(prices) if want == "max" else min(prices)
+    def _best_price(side: list) -> float | None:
+        prices: list[float] = []
+        for entry in side:
+            if not entry:
+                continue
+            try:
+                prices.append(float(entry[0]))
+            except (TypeError, ValueError):
+                continue
+        return max(prices) if prices else None
 
-    # Kalshi convention: `yes` list holds resting BIDs on the YES outcome
-    # (i.e., buyers' prices). The best yes BID is the max price; the best
-    # ask on YES is implied by the NO bid (ask_yes = 100 - bid_no).
-    bid_yes = _best(yes_side, "max")
-    bid_no = _best(no_side, "max")
-    ask_yes = (100.0 - bid_no) if bid_no is not None else None
+    bid_yes = _best_price(yes_side)
+    bid_no = _best_price(no_side)
+    ask_yes = (1.0 - bid_no) if bid_no is not None else None
 
     if bid_yes is not None and ask_yes is not None:
-        prob = (bid_yes + ask_yes) / 2.0 / 100.0
-        return prob, bid_yes / 100.0, ask_yes / 100.0
+        prob = (bid_yes + ask_yes) / 2.0
+        return prob, bid_yes, ask_yes
     if bid_yes is not None:
-        return bid_yes / 100.0, bid_yes / 100.0, None
+        return bid_yes, bid_yes, None
     if ask_yes is not None:
-        return ask_yes / 100.0, None, ask_yes / 100.0
+        return ask_yes, None, ask_yes
     return None, None, None
 
 
@@ -295,9 +306,15 @@ class KalshiCollector:
             resp = await self._api.get_orderbook(m.ticker)
         except KalshiAPIError:
             return
-        book = resp.get("orderbook") if isinstance(resp, dict) else None
+        # Kalshi wraps the order book under `orderbook_fp` (fractional
+        # precision). Older deployments used `orderbook`; fall back to
+        # the top level only if neither key is present.
+        if isinstance(resp, dict):
+            book = resp.get("orderbook_fp") or resp.get("orderbook") or resp
+        else:
+            book = {}
         if not isinstance(book, dict):
-            book = resp if isinstance(resp, dict) else {}
+            book = {}
 
         prob, bid, ask = _midpoint_from_orderbook(book)
         if prob is None:
