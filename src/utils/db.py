@@ -70,7 +70,7 @@ TABLE_DDL: dict[str, str] = {
             underlying_ticker SYMBOL,
             volume_total_usd DOUBLE,
             last_updated TIMESTAMP
-        ) TIMESTAMP(last_updated)
+        ) TIMESTAMP(last_updated) PARTITION BY MONTH WAL
     """,
     "pm_wallets": """
         CREATE TABLE IF NOT EXISTS pm_wallets (
@@ -84,7 +84,7 @@ TABLE_DDL: dict[str, str] = {
             is_contract BOOLEAN,
             trace_status SYMBOL,
             last_traced TIMESTAMP
-        ) TIMESTAMP(last_traced)
+        ) TIMESTAMP(last_traced) PARTITION BY MONTH WAL
     """,
     "pm_anomaly_scores": """
         CREATE TABLE IF NOT EXISTS pm_anomaly_scores (
@@ -133,7 +133,7 @@ TABLE_DDL: dict[str, str] = {
             metric_value DOUBLE,
             sample_size INT,
             window_days INT
-        ) TIMESTAMP(timestamp)
+        ) TIMESTAMP(timestamp) PARTITION BY MONTH WAL
     """,
 }
 
