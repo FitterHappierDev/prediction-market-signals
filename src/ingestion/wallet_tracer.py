@@ -118,7 +118,7 @@ class WalletProfile:
     distinct_markets: int
     total_volume_usd: float
     is_contract: bool
-    trace_status: str  # 'ok' | 'rpc_failed' | 'budget_exhausted' | 'contract' | 'zero_tx'
+    trace_status: str  # 'ok' | 'rpc_failed' | 'budget_exhausted' | 'zero_tx'
     funded_by_exchange: bool = False
     last_traced: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -270,20 +270,21 @@ class WalletTracer:
         except Exception:
             logger.exception("pm_trades query failed for %s", address)
 
-        # Contract check — short-circuits the rest. Contracts are
-        # typically Polymarket proxy wallets; we record them but don't
-        # try to trace funding (the deployer logic isn't useful for our
-        # anomaly signals and would burn RPC).
+        # Contract check. Polymarket wallets in pm_trades are EIP-1167
+        # minimal proxies (one proxy per user); the proxy's first
+        # transfer is its deployment, which equals the user's first
+        # interaction with Polymarket — exactly the wallet-age signal we
+        # want. So we record is_contract but continue tracing. The
+        # `total_transactions` field will always be 1 for proxies, which
+        # the anomaly detector should ignore in favour of PM-derived
+        # counts (distinct_markets, total_volume_usd from pm_trades).
         try:
             if not await self._reserve_rpc():
                 profile.trace_status = "budget_exhausted"
                 return profile
             budget.consume()
             code = await self._alchemy.get_code(address)
-            if _is_contract_code(code):
-                profile.is_contract = True
-                profile.trace_status = "contract"
-                return profile
+            profile.is_contract = _is_contract_code(code)
         except AlchemyError as e:
             logger.warning("get_code failed for %s: %s", address, e)
             profile.trace_status = "rpc_failed"

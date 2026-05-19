@@ -3,6 +3,7 @@
   "notes": "Address sets the wallet tracer consults during sybil clustering and 2-hop USDC funding analysis. All addresses lowercase. Polygon (PoS) network — the same wallet address may belong to a different entity on Ethereum mainnet.\n\nexchange_addresses: when an address in this set appears as a 2-hop USDC funder, the wallet is marked funded_by_exchange and EXCLUDED from sybil clustering (two users withdrawing from the same exchange are not the same entity).\n\naggregator_addresses: when an address in this set appears in the funding path, tracing STOPS — funding_source_1 becomes the aggregator, funding_source_2 is recorded as 'unknown_via_aggregator'. Includes DEX routers, bridges, and cross-chain protocols where tracing further would be unreliable.\n\nTo extend: confirm a label on Polygonscan, add the entry, restart the service. False inclusions cause sybil false-negatives (missed insider clusters); err on the side of conservative additions."
   ,
   "exchange_addresses": [
+    {"address": "0x4d97dcd97ec945f40cf65f87097ace5ea0476045", "label": "Polymarket Relayer (observed 2026-05-19 as hop-1 funder of proxy bettor wallets)"},
     {"address": "0xf977814e90da44bfa03b6295a0616a897441acec", "label": "Binance 8"},
     {"address": "0x28c6c06298d514db089934071355e5743bf21d60", "label": "Binance 14"},
     {"address": "0xdfd5293d8e347dfe59e90efd55b2956a1343963d", "label": "Binance 16"},

@@ -228,6 +228,10 @@ python -m src.main 2>&1 | tee /tmp/main.log
 - **Polymarket discovery returns only 100 active markets** even with `limit=500`. Gamma may be capping the response — worth checking if cursor pagination is supposed to be used here too.
 - **Polling cadence vs market count**: with 100 PM + ~50 Kalshi markets at 4 r/s per source, each full poll cycle takes 50-60s — overshooting the 15s `poll_interval_seconds` target. Once anomaly/signal detection demands tighter freshness, either raise the rate or tier markets by liquidity. **Update 2026-05-19:** measured Kalshi count was 17,110 over 24h (not 50), pushing the cycle to ~71 min. See *Phase 1 gate result → operational issues* for context.
 - **Kalshi trade tape never written** (REQ-KAL-003 silently broken). Discovered during Phase 1 gate check; details in *Phase 1 gate result → operational issues*. P1 — fix before Phase 3.
+- **Polymarket wallets in `pm_trades` are EIP-1167 proxies, not user EOAs.** Discovered 2026-05-19 while probing wallet `0x1a967b272e98b708fb26a947a50c23785ac29797` (top 24h volume): `eth_getCode` returned the standard `0x363d3d37...` minimal-proxy bytecode, `eth_getTransactionCount=1` (only the deployment), and every inbound USDC.e came from a single Polymarket relayer (`0x4d97dcd97ec945f40cf65f87097ace5ea0476045`). Implications for the anomaly detector:
+  - **Wallet age still works** — proxy deployment timestamp = user's first PM interaction (the freshness signal we want).
+  - **`total_transactions` is uninformative** — always ~1 for proxies. Use `distinct_markets` / `total_volume_usd` from `pm_trades` instead for activity-based statistical tests (REQ-ANM-001 step 2).
+  - **Sybil clustering via on-chain funding is largely defeated** — all proxies share the same relayer funder. The relayer is in the `exchange_addresses` exclusion list so we don't false-cluster all PM bettors. A proper sybil signal would require resolving each proxy to its owner EOA (Polymarket factory deployment event, or storage-slot read) — deferred until we observe whether the other 4 signals are enough.
 
 ---
 
