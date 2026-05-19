@@ -251,6 +251,16 @@ class QuestDBClient:
             try:
                 with httpx.Client(timeout=30.0) as client:
                     r = client.get(self._http_url, params={"query": sql})
+                    # 4xx responses carry an `error` field in the JSON
+                    # body — don't retry, and surface the actual message
+                    # so callers can branch on it (e.g. idempotent
+                    # migrations checking for "already exists").
+                    if 400 <= r.status_code < 500:
+                        try:
+                            err = r.json().get("error", r.text[:200])
+                        except Exception:
+                            err = r.text[:200]
+                        raise RuntimeError(f"QuestDB query error: {err}")
                     r.raise_for_status()
                     body = r.json()
             except httpx.HTTPError as e:
