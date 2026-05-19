@@ -1,25 +1,56 @@
 # Build Progress — PM Signal Platform
 
-**Last session:** 2026-05-17
-**Phase:** 1 complete, 2 not yet started
-**Live status:** Polymarket + Kalshi minute bars + Polymarket trade tape writing to QuestDB. Systemd service runs the collector unattended.
+**Last session:** 2026-05-19
+**Phase:** 1 gate passed; Phase 2 starting
+**Live status:** Polymarket + Kalshi minute bars + Polymarket trade tape writing to QuestDB. Systemd service has been up 52h with 0 restarts.
 
 ---
 
 ## Where to pick up
 
-The platform's ingestion layer is live. Both data sources are flowing into QuestDB at minute resolution. Next session, the natural sequence is:
+Phase 1 gate is passed (see *Phase 1 gate result* below). Begin Phase 2:
 
-1. **Verify the 24-hour gate (HUMAN STEP 1.8 from `PM_Platform_Updates_v1.1.md`).** Re-run the validation queries in *Phase 1 acceptance check* below; if all four pass, declare Phase 1 done.
-2. **Phase 2 — Anomaly Detection Layer:**
-   - `src/ingestion/wallet_tracer.py` (REQ-WLT-001/002) — on-demand Polygon RPC traces
-   - `src/detection/anomaly.py` (REQ-ANM-001 through REQ-ANM-004) — 5-signal composite scoring + sybil clustering
-   - Slack/Telegram alert formatting upgrade
-3. Begin manual outcome tracking when CRITICAL alerts fire (HUMAN STEP 2.7).
+1. **AI STEP 2.1 — `src/ingestion/wallet_tracer.py`** (REQ-WLT-001/002): on-demand Polygon RPC traces via Alchemy. Listens on Redis stream `wallets:trace_request`, writes `pm_wallets`, caches `wallet:{address}`.
+2. **AI STEP 2.2/2.3 — `src/detection/anomaly.py`** (REQ-ANM-001 through 004): 5-signal composite scoring + sybil clustering per tech design §7.3.
+3. **AI STEP 2.4 — Notifications upgrade**: Slack block-kit + Telegram Markdown formatting for CRITICAL alerts (skeleton at [src/utils/notifications.py:40](src/utils/notifications.py:40)).
+4. **HUMAN STEP 2.7** — start the manual outcome-tracking spreadsheet when CRITICAL alerts fire.
 
 Tech design and spec reference:
 - `PM_Platform_Technical_Design.md` — section 3.3 (Wallet Tracer), 3.4 (Anomaly Detector), 7.3 (composite score algorithm)
 - `PM_Platform_Spec_Requirements_Core_Pipeline.md` — REQ-WLT-* and REQ-ANM-*
+
+---
+
+## Phase 1 gate result (2026-05-19)
+
+Validated via SSH to EC2 after 52h continuous operation:
+
+| Criterion | Required | Actual | Status |
+|---|---|---|---|
+| Service unattended | ≥24h | 52h, 0 restarts since 2026-05-17 03:08 UTC | ✅ |
+| Both sources flowing in last hour | yes | PM: 4,280 bars / 102 markets; Kalshi: 8,812 bars / 8,812 markets | ✅ |
+| PM ≥7 days history | ≥7d | 9.6 days (2026-05-09 → 2026-05-19) | ✅ |
+| Kalshi from-now history | ~2d | 2.2 days | ✅ |
+| PM trades flowing | yes | 1,396 trades / hour | ✅ |
+| Latest bar freshness | <few min | 2:46 old vs wall clock | ✅ |
+| EC2 clock sync | NTP | 268 ns offset (AWS Time Sync) | ✅ |
+
+### Operational issues uncovered (NOT gate blockers, but address before Phase 3)
+
+1. **Kalshi market count exploded to 17,110 over 24h** (vs documented ~50). At 4 r/s, full poll cycle is ~71 min — each Kalshi market gets one bar every ~71 minutes, not every minute. PM is healthy (102 markets, ~26s cycle). Likely cause: `derive_category_from_event` at [src/ingestion/kalshi.py:52](src/ingestion/kalshi.py:52) is too permissive — every event under Politics/Elections/Economics/Financials is tracked, and Kalshi opens many granular sub-markets (state-level, daily settlements, etc.). Filter more aggressively before Phase 3 needs Kalshi training data.
+2. **Zero Kalshi trades ever written** (total count = 0). REQ-KAL-003 docstring at [src/ingestion/kalshi.py](src/ingestion/kalshi.py) claims it's implemented but the poll path is silently failing or never wired into the loop. P1 priority; Phase 3 training labels benefit from Kalshi trade context but Phase 2's anomaly detector is PM-only (Kalshi has no wallet addresses).
+
+### Side-quest from this session: regaining SSH access
+
+Home IP rotated from `97.113.95.181` → `97.113.147.5`. SSH timed out because **both** the AWS Security Group **and** UFW on the EC2 had the old IP whitelisted. Path that worked:
+
+1. Update AWS SG `pm-platform-sg` inbound rules to new IP — fixed network-level block but not host-level.
+2. UFW still blocked port 22 (Docker bypasses UFW so Grafana/MLflow on 3000/5000 still worked — that's the diagnostic clue).
+3. EC2 Instance Connect failed too (UFW also blocked the EIC IP range).
+4. Enabled **SSM DHMC** (Default Host Management Configuration) in the EC2 → Connect → SSM tab; agent came online without per-instance IAM role.
+5. From the SSM browser shell, `sudo ufw allow from {new IP} ... && sudo ufw delete allow from {old IP} ...` on ports 22/3000/5000.
+
+Moral: when home IP rotates, update **both** the SG **and** UFW. SSM DHMC is the rescue path if you forget.
 
 ---
 
@@ -195,7 +226,8 @@ python -m src.main 2>&1 | tee /tmp/main.log
 - **`config/` symlink design (pitfall #1)** should be refactored so git pulls don't fight us.
 - **Polymarket `category="other"` markets are still ingested** (~50% of the 100 active). Phase 2's anomaly detector could ignore them at signal time, or we filter them at discovery. TBD.
 - **Polymarket discovery returns only 100 active markets** even with `limit=500`. Gamma may be capping the response — worth checking if cursor pagination is supposed to be used here too.
-- **Polling cadence vs market count**: with 100 PM + ~50 Kalshi markets at 4 r/s per source, each full poll cycle takes 50-60s — overshooting the 15s `poll_interval_seconds` target. Once anomaly/signal detection demands tighter freshness, either raise the rate or tier markets by liquidity.
+- **Polling cadence vs market count**: with 100 PM + ~50 Kalshi markets at 4 r/s per source, each full poll cycle takes 50-60s — overshooting the 15s `poll_interval_seconds` target. Once anomaly/signal detection demands tighter freshness, either raise the rate or tier markets by liquidity. **Update 2026-05-19:** measured Kalshi count was 17,110 over 24h (not 50), pushing the cycle to ~71 min. See *Phase 1 gate result → operational issues* for context.
+- **Kalshi trade tape never written** (REQ-KAL-003 silently broken). Discovered during Phase 1 gate check; details in *Phase 1 gate result → operational issues*. P1 — fix before Phase 3.
 
 ---
 
