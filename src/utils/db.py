@@ -159,7 +159,14 @@ class QuestDBClient:
         http_port: int = 9000,
         max_buffer: int = DEFAULT_MAX_BUFFER,
     ) -> None:
-        self._ilp_conf = f"tcp::addr={ilp_host}:{ilp_port};"
+        # ILP over HTTP rather than TCP. The TCP transport's persistent
+        # connection gets killed by QuestDB's 60s idle maintenance
+        # (LINE_TCP_MAINTENANCE_JOB_INTERVAL=60000), and the in-flight
+        # auto-flush buffer is lost when we drop the dead sender. HTTP
+        # is request/response, so each flush is atomic and idempotent —
+        # no broken-pipe race on sparse-write tables (pm_wallets,
+        # pm_markets). Uses the same port (9000) as the web console.
+        self._ilp_conf = f"http::addr={http_host}:{http_port};"
         self._http_url = f"http://{http_host}:{http_port}/exec"
         self._buffer: collections.deque[_BufferedRow] = collections.deque(maxlen=max_buffer)
         self._sender: Sender | None = None
