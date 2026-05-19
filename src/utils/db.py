@@ -285,6 +285,28 @@ class QuestDBClient:
                     continue
                 raise
 
+    def flush(self) -> None:
+        """Force-flush the Sender's internal auto-flush buffer.
+
+        Use sparingly for low-write-rate tables (pm_wallets, pm_markets,
+        anomaly scores). The high-write-rate tables (pm_probabilities,
+        pm_trades) hit auto-flush thresholds naturally — explicit flush
+        on every row caused per-row TCP traffic that QuestDB resets
+        under load (BUILD_PROGRESS pitfall #7).
+
+        Why this exists: the Sender's auto-flush interval is checked on
+        each row() call. For a sparse table written once and then idle,
+        the internal buffer can sit unflushed until QuestDB's 60s idle
+        disconnect fires — at which point the unsent rows are lost when
+        we drop the dead sender. Explicit flush eliminates that race.
+        """
+        if self._sender is None:
+            return
+        try:
+            self._sender.flush()
+        except IngressError as e:
+            logger.warning("flush failed: %s; rows may be in our buffer", e)
+
     def close(self) -> None:
         # Best-effort final flush so the auto-flush buffer isn't lost on
         # shutdown.

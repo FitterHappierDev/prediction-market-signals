@@ -438,17 +438,25 @@ class WalletTracer:
         return markets, volume
 
     async def _persist(self, profile: WalletProfile) -> None:
-        # QuestDB row + Redis cache + publish.
-        symbols = {"trace_status": profile.trace_status}
+        # QuestDB row + explicit flush + Redis cache.
+        # Cast to native Python primitives — numpy types coming back
+        # from pandas (in _query_pm_stats) confuse questdb-python's ILP
+        # encoder.
+        symbols = {"trace_status": str(profile.trace_status)}
         columns: dict[str, Any] = {
-            "wallet_address": profile.address,
-            "funding_source_1": profile.funding_source_1 or "",
-            "funding_source_2": profile.funding_source_2 or "",
-            "total_transactions": profile.total_transactions,
-            "distinct_markets": profile.distinct_markets,
-            "total_volume_usd": profile.total_volume_usd,
-            "is_contract": profile.is_contract,
+            "wallet_address": str(profile.address),
+            "total_transactions": int(profile.total_transactions),
+            "distinct_markets": int(profile.distinct_markets),
+            "total_volume_usd": float(profile.total_volume_usd),
+            "is_contract": bool(profile.is_contract),
         }
+        # Only include the optional VARCHAR columns when we have real
+        # values — passing empty strings caused QuestDB to store the
+        # whole row sparsely (observed 2026-05-19). Same with first_seen.
+        if profile.funding_source_1:
+            columns["funding_source_1"] = profile.funding_source_1
+        if profile.funding_source_2:
+            columns["funding_source_2"] = profile.funding_source_2
         if profile.first_seen is not None:
             columns["first_seen"] = profile.first_seen
 
@@ -458,11 +466,25 @@ class WalletTracer:
             columns=columns,
             at=TimestampNanos(int(profile.last_traced.timestamp() * 1e9)),
         )
+        # Sparse-write tables (one row per trace) can sit in the Sender's
+        # auto-flush buffer past QuestDB's 60s idle disconnect and get
+        # lost. Force-flush so this row actually commits.
+        self._db.flush()
 
         await self._redis.set_hash(
             f"wallet:{profile.address}",
             profile.to_redis_hash(),
             ttl_seconds=self._cache_ttl_seconds,
+        )
+
+        logger.info(
+            "Trace done addr=%s status=%s contract=%s markets=%d vol=$%.0f fund=%s",
+            profile.address,
+            profile.trace_status,
+            profile.is_contract,
+            profile.distinct_markets,
+            profile.total_volume_usd,
+            profile.funding_source_1 or "-",
         )
 
 
