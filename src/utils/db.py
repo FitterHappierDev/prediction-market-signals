@@ -81,6 +81,8 @@ TABLE_DDL: dict[str, str] = {
             total_transactions INT,
             distinct_markets INT,
             total_volume_usd DOUBLE,
+            is_contract BOOLEAN,
+            trace_status SYMBOL,
             last_traced TIMESTAMP
         ) TIMESTAMP(last_traced)
     """,
@@ -134,6 +136,15 @@ TABLE_DDL: dict[str, str] = {
         ) TIMESTAMP(timestamp)
     """,
 }
+
+# Idempotent additive migrations for tables that already exist on disk
+# from an earlier schema version. Each entry is (table, column, type).
+# QuestDB's ALTER TABLE has no IF NOT EXISTS, so _run_migrations() swallows
+# the "column already exists" error and treats it as success.
+SCHEMA_MIGRATIONS: list[tuple[str, str, str]] = [
+    ("pm_wallets", "is_contract", "BOOLEAN"),
+    ("pm_wallets", "trace_status", "SYMBOL"),
+]
 
 
 _BufferedRow = tuple[str, dict[str, str], dict[str, Any], TimestampNanos]
@@ -261,6 +272,18 @@ class QuestDBClient:
         for table, ddl in TABLE_DDL.items():
             logger.info("Ensuring table %s", table)
             self.query(ddl.strip())
+        self._run_migrations()
+
+    def _run_migrations(self) -> None:
+        for table, column, col_type in SCHEMA_MIGRATIONS:
+            try:
+                self.query(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+                logger.info("Migrated: added %s.%s %s", table, column, col_type)
+            except RuntimeError as e:
+                msg = str(e).lower()
+                if "already exists" in msg or "duplicate" in msg:
+                    continue
+                raise
 
     def close(self) -> None:
         # Best-effort final flush so the auto-flush buffer isn't lost on

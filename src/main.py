@@ -30,12 +30,17 @@ from dotenv import load_dotenv  # noqa: E402
 load_dotenv()  # no-op if env already set by systemd
 
 from src.config import get_config  # noqa: E402
+from src.ingestion.alchemy import AlchemyPolygonAPI  # noqa: E402
 from src.ingestion.kalshi import KalshiCollector  # noqa: E402
 from src.ingestion.kalshi_api import KalshiAPI  # noqa: E402
 from src.ingestion.polymarket import PolymarketCollector  # noqa: E402
 from src.ingestion.polymarket_api import PolymarketAPI  # noqa: E402
+from src.ingestion.wallet_tracer import WalletTracer  # noqa: E402
 from src.utils.db import QuestDBClient  # noqa: E402
 from src.utils.redis_client import RedisClient  # noqa: E402
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+EXCHANGE_WALLETS_PATH = PROJECT_ROOT / "config" / "exchange_wallets.json"
 
 logger = logging.getLogger("pm-platform")
 RESTART_DELAY_SECONDS = 30
@@ -111,6 +116,23 @@ async def main_async() -> int:
     pm = PolymarketCollector(pm_api, db, redis_client, cfg)
     kalshi = KalshiCollector(kalshi_api, db, redis_client, cfg)
 
+    # Wallet tracer is feature-flagged. When disabled, the anomaly
+    # detector will operate in degraded mode per REQ-ANM-003.
+    wallet_tracer: WalletTracer | None = None
+    alchemy_api: AlchemyPolygonAPI | None = None
+    if cfg.feature_flags.wallet_tracing_enabled:
+        alchemy_key = os.environ.get("ALCHEMY_API_KEY")
+        if not alchemy_key:
+            logger.warning(
+                "wallet_tracing_enabled=true but ALCHEMY_API_KEY is unset; "
+                "skipping WalletTracer"
+            )
+        else:
+            alchemy_api = AlchemyPolygonAPI(api_key=alchemy_key)
+            wallet_tracer = WalletTracer(
+                alchemy_api, db, redis_client, cfg, EXCHANGE_WALLETS_PATH
+            )
+
     stop_event = asyncio.Event()
 
     def _shutdown(signame: str) -> None:
@@ -133,6 +155,13 @@ async def main_async() -> int:
             run_with_restart("kalshi", kalshi.start, stop_event), name="kalshi"
         ),
     ]
+    if wallet_tracer is not None:
+        tasks.append(
+            asyncio.create_task(
+                run_with_restart("wallet_tracer", wallet_tracer.start, stop_event),
+                name="wallet_tracer",
+            )
+        )
 
     try:
         await pm.backfill_history()
@@ -149,13 +178,18 @@ async def main_async() -> int:
 
     await stop_event.wait()
     logger.info("Stopping collectors...")
-    await asyncio.gather(pm.stop(), kalshi.stop(), return_exceptions=True)
+    stops = [pm.stop(), kalshi.stop()]
+    if wallet_tracer is not None:
+        stops.append(wallet_tracer.stop())
+    await asyncio.gather(*stops, return_exceptions=True)
     for t in tasks:
         t.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
 
     await pm_api.close()
     await kalshi_api.close()
+    if alchemy_api is not None:
+        await alchemy_api.close()
     await redis_client.close()
     db.close()
     logger.info("Clean shutdown complete")
