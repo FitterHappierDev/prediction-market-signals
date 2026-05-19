@@ -216,6 +216,14 @@ python -m src.main 2>&1 | tee /tmp/main.log
 
 14. **httpx logs every HTTP request at INFO.** Drowns out our application logs during backfill. `main.py` sets `httpx`/`httpcore` loggers to WARNING.
 
+15. **QuestDB ILP-over-TCP loses sender-buffered rows on idle disconnect.** With TCP transport, the questdb-python Sender holds rows in an in-memory auto-flush buffer that only flushes on subsequent `row()` calls. Sparse-write tables (pm_wallets, pm_markets) can sit unflushed past QuestDB's 60s `LINE_TCP_MAINTENANCE_JOB_INTERVAL` idle disconnect — at which point the sender is dropped and those rows are lost. Switched the transport to ILP-over-HTTP (`http::addr=…:9000`) at [src/utils/db.py:162](src/utils/db.py:162): each flush is an atomic HTTP POST, no persistent connection means no broken-pipe race. Cost is a small per-flush HTTP overhead, irrelevant at our throughput.
+
+16. **ILP-over-HTTP requires WAL tables.** QuestDB rejects HTTP writes to non-WAL tables with `error: cannot insert in non-WAL table`. A table is WAL only if its DDL declares `PARTITION BY ... WAL` (or just `PARTITION BY ...` — newer QuestDB defaults that to WAL). The original DDL for `pm_markets`, `pm_wallets`, `pm_model_metrics` had no `PARTITION BY`, so they were non-WAL and rejected HTTP writes after we switched transport. Added `PARTITION BY MONTH WAL` to all three DDLs. **Migration: `ALTER TABLE … SET TYPE WAL` fails on non-partitioned tables** (`Cannot convert non-partitioned table`), so the existing tables had to be dropped and recreated. Safe in this case — pm_markets repopulates from the next 30s discovery cycle, pm_wallets / pm_model_metrics were empty.
+
+17. **QuestDB returns 4xx with the error message in the JSON body.** Our `QuestDBClient.query()` was treating 4xx as a transient HTTP error: retry 3 times, then raise `RuntimeError("QuestDB query failed after 3 retries")` with the real message in `__cause__`. The migration handler in `_run_migrations` checks `str(e)` for "already exists" / "duplicate" and re-raised on miss — crashing the service. Fix at [src/utils/db.py:252](src/utils/db.py:252): on 4xx, read the JSON `error` field (or fall back to body text) and raise `RuntimeError` with that message immediately. Idempotent migrations now correctly detect "column already exists" and skip.
+
+18. **Polymarket proxy wallets are funded by more than one relayer.** Found in Phase 2.1 testing: 0x1a96... and 0x4d97... (the relayer we've added to the exclusion list) handle most bettors, but 0x063723… traces back to a different hop-1 funder (0x3a3bd7bb9528e159577f7c2e685cc81a765002e2). Probably another Polymarket factory or proxy deployer; needs Polygonscan confirmation before adding to `config/exchange_wallets.json`.
+
 ---
 
 ## Known limitations / TODO
