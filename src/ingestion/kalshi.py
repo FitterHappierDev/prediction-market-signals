@@ -77,7 +77,8 @@ class KalshiMarket:
     category: str
     bet_type: str
     close_time: datetime | None
-    volume_total_usd: float
+    volume_total_usd: float       # lifetime volume in $, from volume_fp
+    volume_24h_usd: float = 0.0   # trailing 24h volume in $, from volume_24h_fp
     consecutive_skips: int = field(default=0)
 
 
@@ -104,8 +105,12 @@ def should_keep_market(
     bloat per-market poll cadence). Markets that closed > 1 day ago
     are also dropped — Kalshi sometimes returns recently-finalised
     markets in /events?status=open results.
+
+    The volume threshold is applied to trailing-24h volume, not
+    lifetime — a market with $100K lifetime but $0 today is dormant
+    and not informative for live linkage analysis.
     """
-    if m.volume_total_usd < min_volume_usd:
+    if m.volume_24h_usd < min_volume_usd:
         return False, "low_vol"
     if m.close_time is not None:
         days = (m.close_time - now).days
@@ -139,6 +144,11 @@ def parse_market_with_event(
     close_time = _parse_iso(
         raw_market.get("close_time") or raw_market.get("expiration_time")
     )
+    # Kalshi exposes lifetime volume as `volume_fp` and trailing-24h as
+    # `volume_24h_fp`, both already in dollars. Previously this code
+    # read the nonexistent `volume` field and silently wrote 0 for
+    # every Kalshi market (caught 2026-05-22 when the discovery filter
+    # was added and dropped 100% of markets).
     return KalshiMarket(
         market_id=f"kalshi:{ticker}",
         ticker=ticker,
@@ -146,7 +156,8 @@ def parse_market_with_event(
         category=category,
         bet_type=bet_type,
         close_time=close_time,
-        volume_total_usd=float(raw_market.get("volume", 0) or 0),
+        volume_total_usd=float(raw_market.get("volume_fp", 0) or 0),
+        volume_24h_usd=float(raw_market.get("volume_24h_fp", 0) or 0),
     )
 
 

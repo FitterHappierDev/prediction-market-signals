@@ -17,9 +17,10 @@ NOW = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
 
 
 def _market(
-    volume: float = 1000.0,
+    volume_24h: float = 1000.0,
     close_time: datetime | None = NOW + timedelta(days=30),
     title: str = "Test market",
+    lifetime_volume: float | None = None,
 ) -> KalshiMarket:
     return KalshiMarket(
         market_id="kalshi:TEST",
@@ -28,7 +29,8 @@ def _market(
         category="fed_rate",
         bet_type="preset",
         close_time=close_time,
-        volume_total_usd=volume,
+        volume_total_usd=lifetime_volume if lifetime_volume is not None else volume_24h * 10,
+        volume_24h_usd=volume_24h,
     )
 
 
@@ -36,14 +38,14 @@ def _market(
 
 
 def test_keeps_active_liquid_near_market():
-    m = _market(volume=1000.0, close_time=NOW + timedelta(days=10))
+    m = _market(volume_24h=1000.0, close_time=NOW + timedelta(days=10))
     keep, reason = should_keep_market(m, min_volume_usd=500, max_days_to_close=90, now=NOW)
     assert keep is True
     assert reason == "ok"
 
 
 def test_keeps_market_with_no_close_time():
-    m = _market(volume=1000.0, close_time=None)
+    m = _market(volume_24h=1000.0, close_time=None)
     keep, reason = should_keep_market(m, min_volume_usd=500, max_days_to_close=90, now=NOW)
     assert keep is True
 
@@ -51,21 +53,30 @@ def test_keeps_market_with_no_close_time():
 # ---- drops -----------------------------------------------------------------
 
 
-def test_drops_low_volume():
-    m = _market(volume=100.0)
+def test_drops_low_24h_volume():
+    m = _market(volume_24h=100.0)
+    keep, reason = should_keep_market(m, min_volume_usd=500, max_days_to_close=90, now=NOW)
+    assert keep is False
+    assert reason == "low_vol"
+
+
+def test_drops_high_lifetime_but_low_24h():
+    # A market with massive lifetime volume but dead today is not
+    # useful for live linkage analysis — we want freshness.
+    m = _market(volume_24h=100.0, lifetime_volume=1_000_000.0)
     keep, reason = should_keep_market(m, min_volume_usd=500, max_days_to_close=90, now=NOW)
     assert keep is False
     assert reason == "low_vol"
 
 
 def test_drops_volume_exactly_below_threshold():
-    m = _market(volume=499.99)
+    m = _market(volume_24h=499.99)
     keep, _ = should_keep_market(m, min_volume_usd=500, max_days_to_close=90, now=NOW)
     assert keep is False
 
 
 def test_keeps_volume_exactly_at_threshold():
-    m = _market(volume=500.0)
+    m = _market(volume_24h=500.0)
     keep, _ = should_keep_market(m, min_volume_usd=500, max_days_to_close=90, now=NOW)
     assert keep is True
 
