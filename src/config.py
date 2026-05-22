@@ -48,10 +48,16 @@ class WalletTracerSettings(BaseModel):
     hop_depth: int = Field(ge=1)
 
 
+class MarketContextSettings(BaseModel):
+    backfill_days: int = Field(ge=1, default=30)
+    poll_interval_seconds: int = Field(gt=0, default=3600)
+
+
 class IngestionSettings(BaseModel):
     polymarket: PolymarketSettings
     kalshi: KalshiSettings
     wallet_tracer: WalletTracerSettings
+    market_context: MarketContextSettings = MarketContextSettings()
 
 
 class AnomalySettings(BaseModel):
@@ -194,6 +200,7 @@ class FeatureFlags(BaseModel):
     wallet_tracing_enabled: bool
     cross_platform_required: bool
     self_training_enabled: bool
+    market_context_enabled: bool = False
 
 
 class Settings(BaseModel):

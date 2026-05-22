@@ -26,6 +26,11 @@ ingestion:
     max_concurrent_rpc: 5
     retrace_interval_hours: 24
     hop_depth: 2
+  market_context:
+    # Phase 3 Market Context Service (traditional-asset OHLCV).
+    # Feature-flagged off-by-default until verified end-to-end.
+    backfill_days: 30
+    poll_interval_seconds: 3600   # hourly refresh
 
 # ===== DETECTION =====
 detection:
@@ -139,3 +144,4 @@ feature_flags:
   wallet_tracing_enabled: true
   cross_platform_required: false
   self_training_enabled: false
+  market_context_enabled: false

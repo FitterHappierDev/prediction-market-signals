@@ -135,6 +135,20 @@ TABLE_DDL: dict[str, str] = {
             window_days INT
         ) TIMESTAMP(timestamp) PARTITION BY MONTH WAL
     """,
+    # Phase 3 Market Context Service — traditional-asset OHLCV bars
+    # used as the "asset side" of PM→asset linkage analysis.
+    "pm_assets": """
+        CREATE TABLE IF NOT EXISTS pm_assets (
+            timestamp TIMESTAMP,
+            asset_ticker SYMBOL,
+            asset_class SYMBOL,
+            open DOUBLE,
+            high DOUBLE,
+            low DOUBLE,
+            close DOUBLE,
+            volume DOUBLE
+        ) TIMESTAMP(timestamp) PARTITION BY MONTH WAL
+    """,
 }
 
 # Idempotent additive migrations for tables that already exist on disk

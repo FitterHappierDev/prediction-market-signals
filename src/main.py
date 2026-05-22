@@ -33,6 +33,7 @@ from src.config import get_config  # noqa: E402
 from src.ingestion.alchemy import AlchemyPolygonAPI  # noqa: E402
 from src.ingestion.kalshi import KalshiCollector  # noqa: E402
 from src.ingestion.kalshi_api import KalshiAPI  # noqa: E402
+from src.ingestion.market_context import MarketContextCollector  # noqa: E402
 from src.ingestion.polymarket import PolymarketCollector  # noqa: E402
 from src.ingestion.polymarket_api import PolymarketAPI  # noqa: E402
 from src.ingestion.wallet_tracer import WalletTracer  # noqa: E402
@@ -133,6 +134,11 @@ async def main_async() -> int:
                 alchemy_api, db, redis_client, cfg, EXCHANGE_WALLETS_PATH
             )
 
+    # Market Context Service — Phase 3 prep, off by default.
+    market_context: MarketContextCollector | None = None
+    if cfg.feature_flags.market_context_enabled:
+        market_context = MarketContextCollector(db, redis_client, cfg)
+
     stop_event = asyncio.Event()
 
     def _shutdown(signame: str) -> None:
@@ -162,6 +168,13 @@ async def main_async() -> int:
                 name="wallet_tracer",
             )
         )
+    if market_context is not None:
+        tasks.append(
+            asyncio.create_task(
+                run_with_restart("market_context", market_context.start, stop_event),
+                name="market_context",
+            )
+        )
 
     try:
         await pm.backfill_history()
@@ -181,6 +194,8 @@ async def main_async() -> int:
     stops = [pm.stop(), kalshi.stop()]
     if wallet_tracer is not None:
         stops.append(wallet_tracer.stop())
+    if market_context is not None:
+        stops.append(market_context.stop())
     await asyncio.gather(*stops, return_exceptions=True)
     for t in tasks:
         t.cancel()

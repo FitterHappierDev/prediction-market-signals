@@ -35,6 +35,11 @@ optuna~=4.0
 web3~=7.4
 ccxt~=4.4
 
+# --- Traditional-asset market data (Phase 3 Market Context Service) ---
+# yfinance is a community wrapper around Yahoo Finance: free, no key,
+# daily bars reliable; 1-min only for last 7 days. Acceptable for v1.
+yfinance~=0.2
+
 # --- Brokers ---
 alpaca-py~=0.30
 ib_async~=1.0
