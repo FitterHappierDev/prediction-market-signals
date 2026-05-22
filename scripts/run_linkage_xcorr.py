@@ -31,6 +31,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import warnings
+
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -116,6 +118,57 @@ def resample_pair(
     return df.dropna()
 
 
+def granger_test(
+    a: pd.Series, b: pd.Series, max_lag: int
+) -> dict[str, tuple[int, float, float]]:
+    """Runs Granger causality tests in both directions, on the
+    first-differenced (stationary) series.
+
+    Returns {direction_label: (best_lag, F_stat, p_value)} for each of:
+      - 'a_causes_b': does past a help predict b?
+      - 'b_causes_a': does past b help predict a?
+
+    Picks the lag with the lowest p-value within [1, max_lag].
+    """
+    from statsmodels.tsa.stattools import grangercausalitytests
+
+    # First-difference for stationarity. Granger assumes stationary inputs.
+    a_d = a.diff().dropna()
+    b_d = b.diff().dropna()
+    n = min(len(a_d), len(b_d))
+    a_d = a_d.iloc[:n].values
+    b_d = b_d.iloc[:n].values
+
+    # Stack so column 0 is the predicted, column 1 is the candidate
+    # cause. grangercausalitytests tests whether col 1 G-causes col 0.
+    def _best(arr: np.ndarray) -> tuple[int, float, float]:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            results = grangercausalitytests(arr, maxlag=max_lag, verbose=False)
+        best_lag, best_f, best_p = 0, 0.0, 1.0
+        for lag, (tests, _) in results.items():
+            # tests is a dict; 'ssr_ftest' returns (F, p, df_denom, df_num).
+            f_val, p_val, _, _ = tests["ssr_ftest"]
+            if p_val < best_p:
+                best_lag = lag
+                best_f = float(f_val)
+                best_p = float(p_val)
+        return best_lag, best_f, best_p
+
+    # b_causes_a: data has column 0 = a (predicted), column 1 = b (cause)
+    data_bca = np.column_stack([a_d, b_d])
+    b_lag, b_f, b_p = _best(data_bca)
+
+    # a_causes_b: data has column 0 = b (predicted), column 1 = a (cause)
+    data_acb = np.column_stack([b_d, a_d])
+    a_lag, a_f, a_p = _best(data_acb)
+
+    return {
+        "a_causes_b": (a_lag, a_f, a_p),
+        "b_causes_a": (b_lag, b_f, b_p),
+    }
+
+
 def xcorr_scan(
     a: pd.Series,
     b: pd.Series,
@@ -166,6 +219,10 @@ def main() -> int:
                     help="bypass pm_assets and pull yfinance directly at high frequency")
     ap.add_argument("--intraday_period", default="7d", help="yfinance period when --intraday")
     ap.add_argument("--intraday_interval", default="1h", help="yfinance interval when --intraday")
+    ap.add_argument("--granger", action="store_true",
+                    help="also run Layer 2 Granger causality test (both directions)")
+    ap.add_argument("--granger_max_lag", type=int, default=5,
+                    help="max lag for Granger (in resample-period units)")
     args = ap.parse_args()
 
     db = QuestDBClient()
@@ -211,6 +268,36 @@ def main() -> int:
     rows_sorted = sorted(rows, key=lambda x: abs(x[1]), reverse=True)
     for lag, r, n in rows_sorted[:5]:
         print(f"  lag {lag:+4d}  r = {r:+.4f}   n = {n}")
+
+    if args.granger:
+        print(f"\n--- Layer 2: Granger causality (max_lag={args.granger_max_lag}) ---")
+        try:
+            results = granger_test(
+                merged["probability"], merged["close"], args.granger_max_lag
+            )
+        except Exception as e:
+            print(f"Granger failed: {e}", file=sys.stderr)
+            return 4
+
+        pm_to_asset = results["a_causes_b"]
+        asset_to_pm = results["b_causes_a"]
+        print(f"PM probability  →  asset close:   best lag={pm_to_asset[0]}  "
+              f"F={pm_to_asset[1]:.2f}  p={pm_to_asset[2]:.4g}")
+        print(f"asset close    →  PM probability: best lag={asset_to_pm[0]}  "
+              f"F={asset_to_pm[1]:.2f}  p={asset_to_pm[2]:.4g}")
+
+        threshold = 0.05
+        pm_leads = pm_to_asset[2] < threshold
+        asset_leads = asset_to_pm[2] < threshold
+        print(f"\nInterpretation (p<{threshold}):")
+        if pm_leads and not asset_leads:
+            print("  PM market UNIDIRECTIONALLY Granger-causes asset (potential alpha)")
+        elif asset_leads and not pm_leads:
+            print("  Asset Granger-causes PM (market reflects asset, not vice versa)")
+        elif pm_leads and asset_leads:
+            print("  Bidirectional Granger causality (likely contemporaneous mechanism)")
+        else:
+            print("  Neither direction passes — just correlation, no Granger causation")
 
     return 0
 
