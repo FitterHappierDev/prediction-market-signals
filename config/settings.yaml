@@ -9,6 +9,34 @@ ingestion:
     poll_interval_seconds: 15
     backfill_days: 7
     max_requests_per_second: 4
+    # Probability-bar polling is the dominant bandwidth cost. By default
+    # we poll every active market; setting this list restricts the
+    # expensive orderbook poll to specific categories. Trade-tape
+    # polling continues across ALL active markets regardless — it's
+    # cheap and gives us per-wallet activity context (Track B).
+    # 2026-05-22 analysis showed sports/entertainment outcome markets
+    # have no cross-asset linkage; keeping them out of probability
+    # polling saves ~60% of bandwidth without losing wallet visibility.
+    probability_polling_categories:
+      - fed_rate
+      - earnings
+      - recession
+      - geopolitical
+      - political
+      - crypto
+    # Title overrides: poll probability even for non-listed categories
+    # if the title matches one of these regex patterns. Catches
+    # high-value event markets the keyword classifier misses (M&A,
+    # regulatory approvals, corporate events).
+    title_keep_patterns:
+      - 'acqui[rs]'         # acquire/acquisition/acquirer
+      - 'merge[rd]?'        # merge/merger/merged
+      - 'antitrust'
+      - 'FDA approv'
+      - 'SEC settl'
+      - 'FCC approv'
+      - 'IPO'
+      - 'spinoff'
   kalshi:
     poll_interval_seconds: 15
     api_key_env: "KALSHI_API_KEY"

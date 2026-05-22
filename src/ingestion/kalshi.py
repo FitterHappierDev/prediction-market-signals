@@ -403,20 +403,40 @@ class KalshiCollector:
         if not trade_id or not self._seen_trades.add(trade_id):
             return
 
-        # Kalshi exposes count (token quantity) plus yes/no price in cents.
-        count = float(raw.get("count") or 0)
-        yes_price_cents = float(raw.get("yes_price") or 0)
-        no_price_cents = float(raw.get("no_price") or 0)
-        outcome = (raw.get("taker_side") or raw.get("side") or "").lower()  # "yes" | "no"
-        price_cents = yes_price_cents if outcome == "yes" else no_price_cents
-        if count <= 0 or price_cents <= 0:
+        # Kalshi response schema (observed 2026-05-22):
+        #   count_fp           — fractional contract count, string e.g. "25.00"
+        #   yes_price_dollars  — YES price already in $, string e.g. "0.0400"
+        #   no_price_dollars   — NO price already in $, string
+        #   taker_outcome_side — "yes" | "no" — which contract taker traded
+        #   taker_book_side    — "ask" | "bid" — taker bought (ask) or sold (bid)
+        # Older Kalshi schemas used `count` + `{yes,no}_price` (cents);
+        # fall back so the parser survives a Kalshi-side downgrade.
+        count = float(raw.get("count_fp") or raw.get("count") or 0)
+        if raw.get("yes_price_dollars") is not None:
+            yes_price = float(raw.get("yes_price_dollars") or 0)
+            no_price = float(raw.get("no_price_dollars") or 0)
+        else:
+            yes_price = float(raw.get("yes_price") or 0) / 100.0
+            no_price = float(raw.get("no_price") or 0) / 100.0
+
+        outcome = (
+            raw.get("taker_outcome_side")
+            or raw.get("taker_side")
+            or raw.get("side")
+            or ""
+        ).lower()
+        if outcome not in ("yes", "no"):
+            return
+        price = yes_price if outcome == "yes" else no_price
+        if count <= 0 or price <= 0:
             return
 
-        price = price_cents / 100.0
         size_usd = count * price
+        book_side = (raw.get("taker_book_side") or "").lower()
+        direction = "sell" if book_side == "bid" else "buy"
+        side = f"{direction}_{outcome}"
 
         ts = _parse_iso(raw.get("created_time")) or now_utc()
-        side = f"buy_{outcome}" if outcome in ("yes", "no") else ""
 
         self._db.write_row(
             "pm_trades",
@@ -457,6 +477,13 @@ class KalshiCollector:
         while not self._stop.is_set():
             try:
                 self._flush_due_bars(force=False)
+                # Force-flush the ILP sender so trade writes from quiet
+                # markets — and any straggler bar writes — actually
+                # commit. Same pattern as the wallet tracer. Without
+                # this, sparse-table rows can sit in the sender's
+                # in-memory buffer past QuestDB's 60s idle disconnect
+                # and get dropped on sender drop.
+                self._db.flush()
             except Exception:
                 logger.exception("Kalshi bar flush failed")
             try:

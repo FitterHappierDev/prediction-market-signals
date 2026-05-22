@@ -205,6 +205,33 @@ class ParsedMarket:
     consecutive_skips: int = field(default=0)
 
 
+def should_poll_probability(
+    m: ParsedMarket,
+    allowed_categories: frozenset[str],
+    title_keep_patterns: list[re.Pattern],
+) -> bool:
+    """Discovery + steady-state poll gate for the EXPENSIVE orderbook
+    poll. Trade-tape polling is NOT subject to this gate — trades are
+    cheap and the per-wallet activity context is valuable across all
+    market categories (Track B wallet copy-trading / anomaly).
+
+    Defaults to True when no filter is configured, preserving the
+    pre-2026-05-22 behaviour of polling every market.
+    """
+    if not allowed_categories:
+        return True
+    if m.category in allowed_categories:
+        return True
+    # Title overrides catch high-value event markets the classifier
+    # missed (M&A, regulatory approvals, IPO, antitrust, etc.) which
+    # often live in the 'other' bucket but are exactly the markets
+    # the platform's original linkage thesis is built around.
+    for pat in title_keep_patterns:
+        if pat.search(m.title):
+            return True
+    return False
+
+
 def _parse_end_date(raw: Any) -> datetime | None:
     if not raw:
         return None
@@ -337,6 +364,20 @@ class PolymarketCollector:
         self._cfg = cfg
 
         self._poll_interval = cfg.ingestion.polymarket.poll_interval_seconds
+        self._allowed_categories: frozenset[str] = frozenset(
+            cfg.ingestion.polymarket.probability_polling_categories
+        )
+        self._title_keep_patterns: list[re.Pattern] = [
+            re.compile(p, re.IGNORECASE)
+            for p in cfg.ingestion.polymarket.title_keep_patterns
+        ]
+        if self._allowed_categories:
+            logger.info(
+                "PolymarketCollector: probability polling restricted to "
+                "categories=%s plus title patterns=%s",
+                sorted(self._allowed_categories),
+                cfg.ingestion.polymarket.title_keep_patterns,
+            )
         self._active: dict[str, ParsedMarket] = {}
         self._bars: dict[tuple[str, int], BarBuilder] = {}
         self._seen_trades = BoundedSeenSet()
@@ -515,7 +556,14 @@ class PolymarketCollector:
 
     async def _poll_one_market(self, m: ParsedMarket) -> None:
         try:
-            await self._poll_probability(m)
+            # Orderbook poll is gated by category/title — it's the
+            # expensive call and most categories have no asset linkage
+            # to extract. Trade-tape polling runs unconditionally so we
+            # keep wallet activity context for every market.
+            if should_poll_probability(
+                m, self._allowed_categories, self._title_keep_patterns
+            ):
+                await self._poll_probability(m)
             await self._poll_trades(m)
         except PolymarketAPIError as e:
             logger.warning("PM poll failed for %s: %s", m.market_id, e)

@@ -32,6 +32,11 @@ class PolymarketSettings(BaseModel):
     poll_interval_seconds: int = Field(gt=0)
     backfill_days: int = Field(ge=0)
     max_requests_per_second: float = Field(gt=0)
+    # Empty list = poll probability for every market (back-compat).
+    # Non-empty = poll probability only for matching categories OR
+    # markets whose title matches one of title_keep_patterns.
+    probability_polling_categories: list[str] = Field(default_factory=list)
+    title_keep_patterns: list[str] = Field(default_factory=list)
 
 
 class KalshiSettings(BaseModel):
