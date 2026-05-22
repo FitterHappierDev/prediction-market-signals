@@ -55,13 +55,47 @@ CONTRACT_EXCLUSIONS: frozenset[str] = frozenset(
 )
 
 # REQ-PMC-005 — category keyword sets, evaluated in priority order.
+# Each keyword is matched as a whole word (\b boundary) against the
+# lowercased title+description. Multi-word phrases match literally with
+# spaces. Variants (plurals, adjective/noun forms) are listed
+# explicitly so we don't have to think about regex stems — easier to
+# audit when a new false-positive shows up.
 CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "geopolitical": ("strike", "war", "ceasefire", "invasion", "sanctions", "military"),
-    "fed_rate": ("fed", "fomc", "rate cut", "rate hike", "basis point", "interest rate"),
-    "earnings": ("beat quarterly earnings", "miss quarterly earnings", "revenue", "eps"),
-    "recession": ("recession", "gdp", "economic downturn", "contraction"),
-    "crypto": ("bitcoin", "btc", "ethereum", "eth", "crypto", "token"),
-    "political": ("election", "president", "governor", "senate", "congress", "legislation"),
+    "geopolitical": (
+        "strike", "strikes", "airstrike", "airstrikes",
+        "war", "wars", "ceasefire", "ceasefires",
+        "invasion", "invasions", "invade", "invades",
+        "sanctions", "sanction",
+        "military",
+    ),
+    "fed_rate": (
+        "fed", "feds", "fomc", "federal reserve",
+        "rate cut", "rate cuts", "rate hike", "rate hikes",
+        "basis point", "basis points",
+        "interest rate", "interest rates",
+    ),
+    "earnings": (
+        "beat quarterly earnings", "miss quarterly earnings",
+        "earnings", "revenue", "revenues", "eps",
+    ),
+    "recession": (
+        "recession", "recessions", "gdp",
+        "economic downturn", "contraction", "contractions",
+    ),
+    "crypto": (
+        "bitcoin", "btc", "ethereum", "eth", "crypto",
+        "cryptocurrency", "cryptocurrencies",
+        "token", "tokens",
+    ),
+    "political": (
+        "election", "elections",
+        "president", "presidents", "presidential",
+        "governor", "governors", "governorship",
+        "senate", "senator", "senators",
+        "congress", "congressional", "congressman", "congresswoman",
+        "legislation", "legislative", "legislator", "legislators",
+        "nomination", "nominations",  # 2028 Democratic *nomination*
+    ),
 }
 CATEGORY_PRIORITY: tuple[str, ...] = (
     "geopolitical",
