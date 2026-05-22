@@ -15,6 +15,13 @@ ingestion:
     # Empirically the public API throttles below the 10 r/s the spec
     # mentioned — drop to 4 r/s to avoid 429 + 60s pauses.
     max_requests_per_second: 4
+    # Discovery filters — keep Kalshi tracked market count reasonable so
+    # the per-market poll cadence stays close to 1 minute. At 4 r/s the
+    # cycle is roughly N markets / 4 seconds, so 1000 markets = 4 min,
+    # 2000 markets = 8 min. Defaults observed 2026-05-21 cut the live
+    # set from ~19,000 to a few hundred.
+    min_volume_usd: 500.0
+    max_days_to_close: 90
   wallet_tracer:
     max_concurrent_rpc: 5
     retrace_interval_hours: 24

@@ -72,6 +72,22 @@ CATEGORY_PRIORITY: tuple[str, ...] = (
     "political",
 )
 
+# Pre-compiled word-boundary patterns per category. Substring matching
+# (the previous behaviour) caused systematic misclassifications:
+#   - "war" matched "Warnock", "Stewart", "Edwards", "Warren", ...
+#     → political nomination markets mislabelled geopolitical
+#   - "eth" matched "Netherlands", "ethics", "Bethany", ...
+#     → World Cup + sentencing markets mislabelled crypto
+# `\b` anchors each keyword to word boundaries, so "war" still matches
+# "war crime" / "trade war" but not "Warnock".
+_CATEGORY_PATTERNS: dict[str, re.Pattern] = {
+    cat: re.compile(
+        r"\b(?:" + "|".join(re.escape(k) for k in kws) + r")\b",
+        re.IGNORECASE,
+    )
+    for cat, kws in CATEGORY_KEYWORDS.items()
+}
+
 # REQ-PMC-005 — bet_type heuristics
 EXPIRING_HINTS = re.compile(r"\$|above|below|hit|reach", re.IGNORECASE)
 
@@ -183,11 +199,10 @@ def _extract_yes_token_id(raw: dict[str, Any]) -> str | None:
 
 
 def classify_category(title: str, description: str) -> str:
-    text = f"{title} {description}".lower()
+    text = f"{title} {description}"
     for cat in CATEGORY_PRIORITY:
-        for kw in CATEGORY_KEYWORDS[cat]:
-            if kw in text:
-                return cat
+        if _CATEGORY_PATTERNS[cat].search(text):
+            return cat
     return "other"
 
 

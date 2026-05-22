@@ -90,6 +90,32 @@ def _parse_iso(raw: Any) -> datetime | None:
         return None
 
 
+def should_keep_market(
+    m: "KalshiMarket",
+    min_volume_usd: float,
+    max_days_to_close: int,
+    now: datetime,
+) -> tuple[bool, str]:
+    """Discovery filter: returns (keep, reason). The reason is a short
+    tag suitable for counter labels in discovery-cycle log lines.
+
+    Drops markets that are too small (their probabilities are noise
+    rather than signal) or too far out (they sit flat for months and
+    bloat per-market poll cadence). Markets that closed > 1 day ago
+    are also dropped — Kalshi sometimes returns recently-finalised
+    markets in /events?status=open results.
+    """
+    if m.volume_total_usd < min_volume_usd:
+        return False, "low_vol"
+    if m.close_time is not None:
+        days = (m.close_time - now).days
+        if days > max_days_to_close:
+            return False, "far_close"
+        if days < -1:
+            return False, "expired"
+    return True, "ok"
+
+
 def parse_market_with_event(
     raw_market: dict[str, Any], raw_event: dict[str, Any]
 ) -> KalshiMarket | None:
@@ -236,6 +262,12 @@ class KalshiCollector:
         events_seen = 0
         markets_seen = 0
         kept = 0
+        drop_low_vol = 0
+        drop_far_close = 0
+        drop_expired = 0
+        min_vol = self._cfg.ingestion.kalshi.min_volume_usd
+        max_days = self._cfg.ingestion.kalshi.max_days_to_close
+        now = now_utc()
         for kalshi_cat in TARGET_KALSHI_CATEGORIES:
             async for event in self._api.iter_events(
                 category=kalshi_cat, status="open", with_nested_markets=True
@@ -246,16 +278,31 @@ class KalshiCollector:
                     parsed = parse_market_with_event(raw_market, event)
                     if parsed is None:
                         continue
+                    keep, reason = should_keep_market(
+                        parsed, min_vol, max_days, now
+                    )
+                    if not keep:
+                        if reason == "low_vol":
+                            drop_low_vol += 1
+                        elif reason == "far_close":
+                            drop_far_close += 1
+                        elif reason == "expired":
+                            drop_expired += 1
+                        continue
                     self._write_market(parsed)
                     self._active[parsed.market_id] = parsed
                     kept += 1
         logger.info(
             "Kalshi discovery: %d events across %d categories, "
-            "%d markets seen, %d kept",
+            "%d markets seen, %d kept "
+            "(dropped: low_vol=%d, far_close=%d, expired=%d)",
             events_seen,
             len(TARGET_KALSHI_CATEGORIES),
             markets_seen,
             kept,
+            drop_low_vol,
+            drop_far_close,
+            drop_expired,
         )
 
     def _write_market(self, m: KalshiMarket) -> None:

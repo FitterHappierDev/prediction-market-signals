@@ -38,6 +38,8 @@ class KalshiSettings(BaseModel):
     poll_interval_seconds: int = Field(gt=0)
     api_key_env: str
     max_requests_per_second: float = Field(gt=0)
+    min_volume_usd: float = Field(ge=0, default=500.0)
+    max_days_to_close: int = Field(ge=0, default=90)
 
 
 class WalletTracerSettings(BaseModel):
