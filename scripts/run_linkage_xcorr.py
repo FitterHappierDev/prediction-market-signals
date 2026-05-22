@@ -57,7 +57,8 @@ def fetch_pm_series(db: QuestDBClient, market_id: str) -> pd.DataFrame:
 
 
 def fetch_asset_series(db: QuestDBClient, asset_ticker: str) -> pd.DataFrame:
-    """Returns DataFrame indexed on UTC timestamp with column `close`."""
+    """Returns DataFrame indexed on UTC timestamp with column `close`.
+    Pulls from pm_assets (daily). For intraday, use --intraday."""
     sql = (
         "SELECT timestamp, close FROM pm_assets "
         f"WHERE asset_ticker = '{asset_ticker}' "
@@ -69,6 +70,24 @@ def fetch_asset_series(db: QuestDBClient, asset_ticker: str) -> pd.DataFrame:
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
     df = df.set_index("timestamp").sort_index()
     return df
+
+
+def fetch_asset_intraday(asset_ticker: str, period: str, interval: str) -> pd.DataFrame:
+    """On-the-fly yfinance pull bypassing pm_assets — useful for the
+    minute/hour resolution needed against PM probability bars.
+    `period` like '7d', `interval` like '1m', '5m', '15m', '1h'."""
+    import yfinance as yf
+    df = yf.download(
+        asset_ticker, period=period, interval=interval,
+        progress=False, auto_adjust=False,
+    )
+    if df is None or df.empty:
+        return pd.DataFrame()
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    df.index = pd.to_datetime(df.index, utc=True)
+    out = df[["Close"]].rename(columns={"Close": "close"})
+    return out
 
 
 def resample_pair(
@@ -143,12 +162,19 @@ def main() -> int:
     ap.add_argument("--asset_ticker", required=True, help="e.g. TLT, EURUSD=X, BTC-USD")
     ap.add_argument("--resample", default="D", choices=["D", "H", "MIN"], help="resample frequency")
     ap.add_argument("--max_lag", type=int, default=5, help="max lag in resample-period units")
+    ap.add_argument("--intraday", action="store_true",
+                    help="bypass pm_assets and pull yfinance directly at high frequency")
+    ap.add_argument("--intraday_period", default="7d", help="yfinance period when --intraday")
+    ap.add_argument("--intraday_interval", default="1h", help="yfinance interval when --intraday")
     args = ap.parse_args()
 
     db = QuestDBClient()
 
     pm = fetch_pm_series(db, args.market_id)
-    a = fetch_asset_series(db, args.asset_ticker)
+    if args.intraday:
+        a = fetch_asset_intraday(args.asset_ticker, args.intraday_period, args.intraday_interval)
+    else:
+        a = fetch_asset_series(db, args.asset_ticker)
 
     print(f"PM market {args.market_id}: {len(pm)} bars  "
           f"({pm.index.min() if not pm.empty else '-'} → {pm.index.max() if not pm.empty else '-'})")
