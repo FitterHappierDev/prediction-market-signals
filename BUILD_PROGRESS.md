@@ -245,6 +245,29 @@ python -m src.main 2>&1 | tee /tmp/main.log
 
 ---
 
+## First linkage results (2026-05-22)
+
+Ran [`scripts/run_linkage_xcorr.py`](scripts/run_linkage_xcorr.py) — Phase 3 Layer 1 (cross-correlation) + Layer 2 (Granger causality) — against two PM markets with intraday-resolution asset data from yfinance.
+
+| PM market | Asset | Layer 1 peak r | Lag | Layer 2 PM→asset | Layer 2 asset→PM | Verdict |
+|---|---|---|---|---|---|---|
+| `KXNASDAQ100U-26MAY22H1600-T29599.99` (Nasdaq 4pm settle) | `^NDX` | **+0.883** | +1 min | p=0.092 | **p<10⁻¹⁵** | Asset Granger-causes PM |
+| `KXEURUSDQ-26JUN3010-T1.20` (EUR/USD Q2 end ≥1.20) | `EURUSD=X` | **+0.375** | +528 min (~9h) | p=0.079 | **p=0.005** | Asset Granger-causes PM |
+
+**The original "PM leads asset" thesis isn't supported by either test** — in both cases the asset Granger-causes the PM market, not the other way around. These markets are *derivatives* of the underlying asset: their probability reflects current spot, not insider expectations about future spot. No alpha to extract by trading the asset on a PM signal.
+
+**Caveats:**
+- Both tested markets are explicit "where will X close?" derivative types. The original thesis was always about **event** markets (geopolitical, FOMC dot-plot surprises, regulatory rulings) where PM probability captures information *not* yet priced into assets.
+- Polymarket has 1 real geopolitical market (China-Taiwan, $9K vol, flat probability) and 0 real Fed-related markets in our window. Kalshi has dozens of real event markets but their probabilities have either resolved (CPI) or are flat (Fed June 96.5% holds).
+- ~5 days of overlapping PM+asset data per test. The 5-layer validator was designed for months-to-years of data.
+
+**What this means for next steps:**
+- Stop treating "literal derivative" markets as candidate alpha. They're pipeline validation only.
+- Active hunt for **event markets** with real probability dynamics: scan all PM/Kalshi markets for `sigma(probability) >= 0.05` over the last 7d, filter to ones with plausible asset linkage by title keyword (oil/recession/Fed/geopolitical), prioritise by liquidity.
+- Need wider/older asset coverage — the 30-day backfill catches only the most recent context. For event-study analysis around past releases (CPI, FOMC, jobs), we need historical-event labeling.
+
+---
+
 ## Commit summary (this session)
 
 In chronological order, all on `main`:
