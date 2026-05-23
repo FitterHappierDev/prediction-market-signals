@@ -1,23 +1,41 @@
 # Build Progress — PM Signal Platform
 
-**Last session:** 2026-05-19
-**Phase:** 1 gate passed; Phase 2 starting
-**Live status:** Polymarket + Kalshi minute bars + Polymarket trade tape writing to QuestDB. Systemd service has been up 52h with 0 restarts.
+**Last session:** 2026-05-22 → 2026-05-23 (rolling)
+**Phase:** Phase 1 + 2.1 + Phase 3 prototype live. **Strategy under review** — see *Strategy pivot* section below.
+**Live status:** Polymarket + Kalshi minute bars + Polymarket trade tape + **Kalshi trade tape** + traditional-asset OHLCV all writing to QuestDB. Wallet tracer subscribing to trace requests. Service has been up ~30 min on the latest deploy with 0 restarts. PM probability-poll bandwidth cut 79% via category gate.
 
 ---
 
 ## Where to pick up
 
-Phase 1 gate is passed (see *Phase 1 gate result* below). Begin Phase 2:
+Detailed linkage analysis is captured in [`LINKAGE_ANALYSIS_REPORT_2026-05-22.md`](LINKAGE_ANALYSIS_REPORT_2026-05-22.md). Strategy pivot decisions are documented in *Strategy pivot* below. Concrete next-session candidates:
 
-1. **AI STEP 2.1 — `src/ingestion/wallet_tracer.py`** (REQ-WLT-001/002): on-demand Polygon RPC traces via Alchemy. Listens on Redis stream `wallets:trace_request`, writes `pm_wallets`, caches `wallet:{address}`.
-2. **AI STEP 2.2/2.3 — `src/detection/anomaly.py`** (REQ-ANM-001 through 004): 5-signal composite scoring + sybil clustering per tech design §7.3.
-3. **AI STEP 2.4 — Notifications upgrade**: Slack block-kit + Telegram Markdown formatting for CRITICAL alerts (skeleton at [src/utils/notifications.py:40](src/utils/notifications.py:40)).
-4. **HUMAN STEP 2.7** — start the manual outcome-tracking spreadsheet when CRITICAL alerts fire.
+1. **Quick win (~30 min)**: prune stale markets from KalshiCollector's in-memory `_active` set during discovery — silences the `pm_market_stale` log noise from Truflation markets that resolved.
+2. **Track B foundation (~1 session)**: wallet performance tracker — for each wallet in pm_trades, compute rolling trade count, distinct markets, total volume, and (once any markets resolve) win rate. Lands in a new view/table; downstream of the future copy-trading strategy.
+3. **Track C foundation (~1 session)**: build the Time Adjuster Mode B (REQ-TAJ-002) — theoretical-probability calculator for "expiring" PM/Kalshi markets, surface `information_premium = market_prob − theoretical_prob` so we can spot Kalshi mispricings.
+4. **Second-tier Kalshi filter (~30 min)**: re-include short-fuse high-velocity macro markets (Truflation CPI dailies, FX threshold settles) currently filtered out for being <$500 24h volume — they're individually small but the cleanest informational substrates.
+5. **Original Phase 2.2 anomaly detector** still on deck (REQ-ANM-001…004) but lower priority given the strategic re-orientation toward Tracks B/C.
 
-Tech design and spec reference:
-- `PM_Platform_Technical_Design.md` — section 3.3 (Wallet Tracer), 3.4 (Anomaly Detector), 7.3 (composite score algorithm)
-- `PM_Platform_Spec_Requirements_Core_Pipeline.md` — REQ-WLT-* and REQ-ANM-*
+Tech design / spec reference (for any of the above):
+- `PM_Platform_Technical_Design.md` — section 3.3 (Wallet Tracer), 3.4 (Anomaly Detector), 3.5 (Time Adjuster — Mode B is the Track-C foundation), 3.8 (Linkage Registry), 7.3 (composite score)
+- `PM_Platform_Spec_Requirements_Core_Pipeline.md` — REQ-WLT-*, REQ-ANM-*, REQ-TAJ-*, REQ-SIG-*
+
+---
+
+## Strategy pivot (2026-05-22 → 2026-05-23)
+
+The original platform design bet that PM probability moves *lead* asset moves, and we'd trade the asset on a PM signal. After running Layer 1 (cross-correlation) and Layer 2 (Granger causality) against two derivative-style PM markets, **both showed asset → PM Granger causality, not the reverse**. Details and caveats in [LINKAGE_ANALYSIS_REPORT_2026-05-22.md](LINKAGE_ANALYSIS_REPORT_2026-05-22.md).
+
+The thesis isn't refuted — the tested markets were the wrong type (derivatives, not events) — but the platform is now running three parallel research tracks rather than a single one:
+
+- **Track A — original cross-asset linkage**: continue passively. Build the event-market screener as a cheap experiment generator. Lowest near-term confidence given test results, but the infrastructure stays useful for the other tracks.
+- **Track B — wallet copy-trading on PM directly**: identify wallets with proven edge on PM (high rolling win rate, fast-mover behavior, well-sized bets) and mirror their trades on PM itself. Bypasses the asset-side linkage entirely; uses data we already capture. **Sports markets become the lab bench** — most resolved markets, clearest insider signal events (injuries, lineup changes), short cycle times. We don't trade sports; we use them to train and validate the wallet anomaly detector before deploying on macro/event markets where the consequences are more interesting.
+- **Track C — Kalshi mispricing arb on derivative markets**: trade Kalshi (not the asset) when the asset price has moved but Kalshi probability hasn't caught up. The platform's Phase 3 Time Adjuster Mode B was designed for exactly this. Most platform-ready of the new tracks. Blocked by needing a funded Kalshi trading account with API access.
+
+**Concrete data/ingest decisions made for the pivot:**
+- Polymarket probability bars are now gated to 6 macro/event categories (config). Sports/entertainment orderbook polls dropped — saves ~79% of probability writes. Trade tape continues across **all** active PM markets (preserves wallet activity context for Track B). Title overrides catch M&A/regulatory/IPO event markets the keyword classifier puts in `other`.
+- Kalshi trade tape was silently broken since launch (REQ-KAL-003) — fixed 2026-05-22. ~20K Kalshi taker-flow rows arriving in the first 30 min post-fix; Track B and Track C both unblocked for Kalshi.
+- Phase 2.2 anomaly detector is **deferred** in favor of Track B work — same underlying ANM-* design but applied to wallet copy-trading discovery rather than as a standalone alerter.
 
 ---
 
@@ -268,9 +286,11 @@ Ran [`scripts/run_linkage_xcorr.py`](scripts/run_linkage_xcorr.py) — Phase 3 L
 
 ---
 
-## Commit summary (this session)
+## Commit summary (cumulative)
 
-In chronological order, all on `main`:
+In chronological order, all on `main`.
+
+### Phase 1 — ingestion (2026-05-16 → 2026-05-17)
 
 | Commit | Summary |
 |---|---|
@@ -300,6 +320,45 @@ In chronological order, all on `main`:
 | `c8ef131` | Walk Kalshi /events (not /markets) for category-aware discovery |
 | `b96bb65` | Probe one Kalshi orderbook response |
 | `44316f9` | Match Kalshi orderbook_fp shape; stop dividing in-dollar prices by 100 |
+| `2a49803` | Add BUILD_PROGRESS.md — session summary + Phase 2 plan |
+
+### Phase 1 gate + Phase 2.1 wallet tracer (2026-05-19)
+
+| Commit | Summary |
+|---|---|
+| `d9207c8` | Record Phase 1 gate pass (2026-05-19) + Kalshi follow-ups |
+| `0d379f9` | Build Polygon Wallet Tracer (REQ-WLT-001/020/021) |
+| `07dbac5` | Don't short-circuit wallet trace on EIP-1167 proxies (Polymarket wallets) |
+| `b3f7be9` | Force-flush pm_wallets writes; cast numpy types to primitives |
+| `39bbfad` | Don't retry on QuestDB 4xx; surface the actual error message |
+| `aba0bd8` | Switch QuestDB ILP transport from TCP to HTTP |
+| `a824481` | Make pm_markets, pm_wallets, pm_model_metrics WAL tables |
+| `1982034` | Document QuestDB transport + WAL pitfalls + 2nd PM relayer |
+
+### Data-quality fixes (2026-05-22)
+
+| Commit | Summary |
+|---|---|
+| `d265522` | Fix classifier substring bug (`\b` word boundaries) + tighten Kalshi discovery filter |
+| `d4da747` | Expand category keyword variants (caught by unit tests) |
+| `6451a12` | Read Kalshi `volume_24h_fp` / `volume_fp` (not nonexistent `volume`) |
+| `9b67186` | Doc Kalshi-filter results + two new follow-ups |
+
+### Phase 3 prototype — Market Context Service + linkage tests (2026-05-22)
+
+| Commit | Summary |
+|---|---|
+| `b253c54` | Add Market Context Service (Phase 3 prep, feature-flagged off) |
+| `d1dd259` | Add scripts/run_linkage_xcorr.py — Phase 3 Layer 1 prototype |
+| `53f3560` | xcorr script: `--intraday` flag to bypass pm_assets via yfinance direct |
+| `cc5742f` | xcorr script: add Layer 2 Granger causality (`--granger`) |
+| `a00a1f5` | Doc 2026-05-22 linkage results: derivatives don't lead, they follow |
+
+### Strategy pivot fixes (2026-05-22 → 2026-05-23)
+
+| Commit | Summary |
+|---|---|
+| `14b76bd` | PM polling gate by category + fix Kalshi trade-tape silent failure (REQ-KAL-003) |
 
 ---
 
