@@ -39,6 +39,20 @@ The thesis isn't refuted — the tested markets were the wrong type (derivatives
 
 ---
 
+## Operational decision: S3 backup ownership delegated to medallion-navigator (2026-06-25)
+
+The EC2 box is shared with the **medallion-navigator** project (we see its `market_ohlcv~16` table alongside ours in the QuestDB log). Medallion is wiring up an offload wrapper that owns `/data/backups`: keeps 1 local tar, ships the rest to `s3://medallion-navigator-backups`, controls retention.
+
+PM's [`scripts/backup.sh`](scripts/backup.sh) was also configured to `aws s3 sync /data/backups/ … --delete` if `S3_BACKUP_BUCKET` was set. Two scripts with `--delete` on the same directory would fight; the one with shorter retention would silently truncate the other's archive.
+
+**Decision:** PM defers its S3 offload to medallion. `S3_BACKUP_BUCKET` is now blanked in EC2 `.env` (was the placeholder `pm-platform-backups-yourid` — silently failing nightly). `.env.example` documents the delegation so a future provisioning pass doesn't re-fill it.
+
+PM's local-tar step still runs (`/data/backups/questdb-backup-YYYYMMDD.tar.gz`). Medallion picks those tars up and ships them to S3. Data durability is preserved; one owner of retention.
+
+Side issue surfaced while investigating: backup.sh uses `set -euo pipefail`, but `tar -czf` returns non-zero whenever a file changes mid-read (common with a live QuestDB; "file changed as we read it" warnings). This likely kills the script before the local-retention prune fires — accumulating tars instead of pruning the 7-day window. **Not addressed in this change** (the prune step happens before the S3 step we removed; both were affected the same way). Either wrap the tar call with `|| true` after inspecting the exit code, or do a proper `SNAPSHOT PREPARE;` / `SNAPSHOT COMPLETE;` round-trip against QuestDB first. P2 follow-up.
+
+---
+
 ## Phase 1 gate result (2026-05-19)
 
 Validated via SSH to EC2 after 52h continuous operation:
