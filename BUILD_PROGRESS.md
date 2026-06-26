@@ -49,7 +49,9 @@ PM's [`scripts/backup.sh`](scripts/backup.sh) was also configured to `aws s3 syn
 
 PM's local-tar step still runs (`/data/backups/questdb-backup-YYYYMMDD.tar.gz`). Medallion picks those tars up and ships them to S3. Data durability is preserved; one owner of retention.
 
-Side issue surfaced while investigating: backup.sh uses `set -euo pipefail`, but `tar -czf` returns non-zero whenever a file changes mid-read (common with a live QuestDB; "file changed as we read it" warnings). This likely kills the script before the local-retention prune fires — accumulating tars instead of pruning the 7-day window. **Not addressed in this change** (the prune step happens before the S3 step we removed; both were affected the same way). Either wrap the tar call with `|| true` after inspecting the exit code, or do a proper `SNAPSHOT PREPARE;` / `SNAPSHOT COMPLETE;` round-trip against QuestDB first. P2 follow-up.
+**Coordination timing (medallion side, 2026-06-26):** medallion's offload cron runs at **05:00 UTC** (moved from the original 03:30 to leave room for our SNAPSHOT-wrapped tar — a ~45-min job that can occasionally run longer during heavy-ingest days) and skips any tar modified within the last 15 minutes. PM's tar at 03:00 UTC finishes well before that window. No PM-side timing constraint to maintain unless we ever push the cron later than ~04:30.
+
+**Tar-exit-code follow-up resolution (2026-06-26):** backup.sh now wraps `tar` in QuestDB `SNAPSHOT PREPARE;` / `SNAPSHOT COMPLETE;` with an EXIT trap that always COMPLETEs the snapshot to prevent the WAL-pending lock. Logical point-in-time consistency is guaranteed. **Still TBD:** whether the SNAPSHOT wrap actually eliminates the "file changed as we read it" warnings on QuestDB 8.x WAL tables — first cron run with the new script (tomorrow 03:00 UTC) will be the clean test. If warnings persist, look into QuestDB 8.x file-level snapshot mode. Either way medallion's pickup is robust to PM's exit code via the 15-min guard.
 
 ---
 
